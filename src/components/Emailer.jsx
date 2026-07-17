@@ -242,7 +242,7 @@ const Emailer = () => {
         const sheet = workbook.Sheets[name];
         allText += XLSX.utils.sheet_to_csv(sheet) + '\n';
       });
-      const found = allText.match(/[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/g) || [];
+      const found = allText.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g) || [];
       const unique = [...new Set([...emails, ...found])];
       setEmails(unique);
     };
@@ -265,12 +265,12 @@ const Emailer = () => {
             'Content-Type': 'application/json',
             ...authHeaders,
           },
-          body: JSON.stringify({ emails, subject, body: toSend }),
+          body: JSON.stringify({ emails, subject, body: toSend, isHtml: Boolean(usingTemplate) }),
         }
       );
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to send');
-      setResult({ type: 'success', message: `Sent to ${data.sent} recipient${data.sent !== 1 ? 's' : ''}.${data.failed > 0 ? ` ${data.failed} failed.` : ''}` });
+      setResult({ type: 'success', message: `Sent to ${data.sent} recipient${data.sent !== 1 ? 's' : ''}.${data.failed > 0 ? ` ${data.failed} failed${data.firstError ? `: ${data.firstError}` : '.'}` : ''}` });
       setEmails([]);
       setSubject('');
       setBody('');
