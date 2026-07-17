@@ -1,0 +1,449 @@
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Check, Clock, Copy, ExternalLink, Gift, RefreshCw, Search, Users, WalletCards, X } from 'lucide-react';
+import { getAdminAuthHeaders, supabaseAdmin } from '../services/supabaseClient';
+import './AffiliateRequests.css';
+
+const FILTERS = ['all', 'pending', 'approved', 'rejected'];
+
+const formatDate = (value) => value ? new Intl.DateTimeFormat('en-US', {
+  month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit',
+}).format(new Date(value)) : '—';
+
+const label = (value) => value
+  ? value.charAt(0).toUpperCase() + value.slice(1).replaceAll('_', ' ')
+  : 'Not provided';
+
+const displayStatus = (status) => status === 'declined' ? 'rejected' : (status || 'pending');
+
+const readFunctionResponse = async (response) => {
+  const text = await response.text();
+  if (!text) return {};
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw new Error(response.ok
+      ? 'The server returned an invalid response.'
+      : text.slice(0, 500));
+  }
+};
+
+const decisionCopy = (request, action) => {
+  const firstName = request.name?.trim().split(/\s+/)[0] || 'there';
+  return action === 'approved'
+    ? `Hi ${firstName}, your affiliate application has been approved. Welcome to the TCGPlaytest Affiliate Program!`
+    : `Hi ${firstName}, thank you for applying. We are unable to approve your affiliate application at this time, but you are welcome to apply again in the future.`;
+};
+
+export default function AffiliateRequests() {
+  const [requests, setRequests] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [filter, setFilter] = useState('pending');
+  const [search, setSearch] = useState('');
+  const [dialog, setDialog] = useState(null);
+  const [sending, setSending] = useState(false);
+  const [grantForm, setGrantForm] = useState({ recipient: '', amount: '', note: '' });
+  const [granting, setGranting] = useState(false);
+  const [grantResult, setGrantResult] = useState(null);
+  const [walletBalances, setWalletBalances] = useState({});
+
+  const loadRequests = useCallback(async () => {
+    setLoading(true);
+    setError('');
+    const [requestsResult, profilesResult, walletsResult] = await Promise.all([
+      supabaseAdmin.from('affiliate_applications').select('*').order('created_at', { ascending: false }),
+      supabaseAdmin.from('profiles').select('id,email,full_name'),
+      supabaseAdmin.from('wallet_accounts').select('user_id,balance,reserved_balance').eq('account_code', 'prints'),
+    ]);
+    const queryError = requestsResult.error || profilesResult.error || walletsResult.error;
+    if (queryError) {
+      setError(queryError.message);
+    } else {
+      const profilesById = new Map((profilesResult.data || []).map((profile) => [profile.id, profile]));
+      const nextBalances = {};
+      (walletsResult.data || []).forEach((wallet) => {
+        const profile = profilesById.get(wallet.user_id);
+        const balance = Number(wallet.balance || 0);
+        nextBalances[wallet.user_id] = balance;
+        if (profile?.email) nextBalances[profile.email.toLowerCase()] = balance;
+      });
+      setRequests(requestsResult.data || []);
+      setWalletBalances(nextBalances);
+    }
+    setLoading(false);
+  }, []);
+
+  useEffect(() => { loadRequests(); }, [loadRequests]);
+
+  const counts = useMemo(() => requests.reduce((result, request) => {
+    const status = displayStatus(request.status);
+    result[status] = (result[status] || 0) + 1;
+    result.all += 1;
+    return result;
+  }, { all: 0, pending: 0, approved: 0, rejected: 0 }), [requests]);
+
+  const visibleRequests = useMemo(() => {
+    const query = search.trim().toLowerCase();
+    return requests.filter((request) => {
+      const matchesFilter = filter === 'all' || displayStatus(request.status) === filter;
+      const matchesSearch = !query || [request.name, request.email, request.primary_channel, request.message]
+        .some((value) => String(value || '').toLowerCase().includes(query));
+      return matchesFilter && matchesSearch;
+    });
+  }, [filter, requests, search]);
+
+  const approvedMembers = useMemo(
+    () => requests.filter((request) => displayStatus(request.status) === 'approved'),
+    [requests],
+  );
+
+  const openDecision = (request, action) => setDialog({
+    request,
+    action,
+    approvalType: 'code',
+    affiliateCode: request.requested_affiliate_code || '',
+    message: decisionCopy(request, action),
+    error: '',
+  });
+
+  const submitPrintGrant = async (event) => {
+    event.preventDefault();
+    const amount = Number(grantForm.amount);
+    if (!grantForm.recipient.trim() || !Number.isSafeInteger(amount) || amount <= 0) return;
+    if (!window.confirm(`Grant ${amount.toLocaleString()} prints to ${grantForm.recipient.trim()}?`)) return;
+
+    setGranting(true);
+    setGrantResult(null);
+    try {
+      const authHeaders = await getAdminAuthHeaders();
+      const response = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/grant-prints`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...authHeaders,
+        },
+        body: JSON.stringify({
+          recipient: grantForm.recipient.trim(),
+          amount,
+          note: grantForm.note.trim(),
+        }),
+      });
+      const result = await readFunctionResponse(response);
+      if (!response.ok) throw new Error(result.error || 'Could not grant prints.');
+      const profileName = result.profile?.full_name || result.profile?.email || grantForm.recipient;
+      const reportsEmailDelivery = Object.prototype.hasOwnProperty.call(result, 'emailSent');
+      const emailMessage = reportsEmailDelivery
+        ? (result.emailSent ? 'Notification email sent.' : result.emailWarning)
+        : 'The deployed grant-prints function did not report an email attempt. Redeploy grant-prints to the Supabase project used by this dashboard.';
+      setGrantResult({
+        type: reportsEmailDelivery && result.emailSent ? 'success' : 'warning',
+        message: [
+          `Granted ${amount.toLocaleString()} prints to ${profileName}. New balance: ${Number(result.resultingBalance).toLocaleString()}.`,
+          emailMessage,
+        ].filter(Boolean).join(' '),
+      });
+      setWalletBalances((current) => ({
+        ...current,
+        [result.profile.id]: Number(result.resultingBalance),
+        [String(result.profile.email || '').toLowerCase()]: Number(result.resultingBalance),
+      }));
+      setGrantForm({ recipient: '', amount: '', note: '' });
+    } catch (grantError) {
+      setGrantResult({ type: 'error', message: grantError.message });
+    } finally {
+      setGranting(false);
+    }
+  };
+
+  const submitDecision = async (event) => {
+    event.preventDefault();
+    if (!dialog || sending) return;
+    setSending(true);
+    setDialog((current) => ({ ...current, error: '' }));
+    try {
+      const authHeaders = await getAdminAuthHeaders();
+      const response = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/affiliate-request-action`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...authHeaders },
+        body: JSON.stringify({
+          requestId: dialog.request.id,
+          action: dialog.action,
+          approvalType: dialog.approvalType,
+          affiliateCode: dialog.action === 'approved' ? dialog.affiliateCode.trim().toUpperCase() : undefined,
+          message: dialog.message.trim(),
+        }),
+      });
+      const result = await readFunctionResponse(response);
+      if (!response.ok) throw new Error(result.error || 'Could not process this request.');
+      setRequests((current) => current.map((request) => request.id === result.request.id ? result.request : request));
+      setDialog(null);
+    } catch (actionError) {
+      setDialog((current) => ({ ...current, error: actionError.message }));
+    } finally {
+      setSending(false);
+    }
+  };
+
+  return (
+    <section className="affiliate-page">
+      <div className="affiliate-heading">
+        <div><h1 className="page-title">Affiliate Requests</h1><p>Review applications and track every decision.</p></div>
+        <button className="affiliate-refresh" onClick={loadRequests} disabled={loading} type="button"><RefreshCw size={16} className={loading ? 'spin' : ''} /> Refresh</button>
+      </div>
+      <div className="affiliate-summary">
+        <div><Users size={18} /><span><strong>{counts.all}</strong>Total</span></div>
+        <div><Clock size={18} /><span><strong>{counts.pending}</strong>Pending</span></div>
+        <div className="is-approved"><Check size={18} /><span><strong>{counts.approved}</strong>Approved</span></div>
+        <div className="is-rejected"><X size={18} /><span><strong>{counts.rejected}</strong>Rejected</span></div>
+      </div>
+
+      <section className="approved-members-panel">
+        <div className="approved-members-heading">
+          <div>
+            <h2><WalletCards size={19} /> Approved members</h2>
+            <p>Live PRINTS balances for every approved affiliate.</p>
+          </div>
+          <span>{approvedMembers.length} member{approvedMembers.length === 1 ? '' : 's'}</span>
+        </div>
+        {approvedMembers.length === 0 ? (
+          <div className="approved-members-empty">No approved affiliates yet.</div>
+        ) : (
+          <div className="approved-members-list">
+            {approvedMembers.map((member) => {
+              const balance = walletBalances[String(member.email || '').toLowerCase()] ?? 0;
+              return (
+                <div className="approved-member-row" key={member.id}>
+                  <div className="approved-member-person">
+                    <div className="affiliate-avatar">{(member.name || member.email || '?').charAt(0).toUpperCase()}</div>
+                    <div><strong>{member.name || 'Unnamed member'}</strong><span>{member.email}</span></div>
+                  </div>
+                  <div className="approved-member-balance">
+                    <strong>{balance.toLocaleString()}</strong><span>PRINTS</span>
+                  </div>
+                  {member.affiliate_link || member.affiliate_code ? (
+                    <button type="button" onClick={() => navigator.clipboard.writeText(member.affiliate_link || member.affiliate_code)}>
+                      <Copy size={13} /> {member.affiliate_link ? 'Link' : member.affiliate_code}
+                    </button>
+                  ) : <span className="approved-member-no-link">No code/link</span>}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setGrantForm((current) => ({ ...current, recipient: member.email || '' }));
+                      setGrantResult(null);
+                    }}
+                  >
+                    <Gift size={14} /> Grant prints
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </section>
+
+      <section className="print-grant-panel">
+        <div className="print-grant-heading">
+          <div className="print-grant-icon"><Gift size={20} /></div>
+          <div>
+            <h2>Grant prints</h2>
+            <p>Add prints to any registered user&apos;s wallet. Every grant is recorded in the wallet ledger.</p>
+          </div>
+        </div>
+        <form className="print-grant-form" onSubmit={submitPrintGrant}>
+          <label>
+            Profile email or UUID
+            <input
+              type="text"
+              required
+              value={grantForm.recipient}
+              onChange={(event) => setGrantForm((current) => ({ ...current, recipient: event.target.value }))}
+              placeholder="customer@example.com"
+            />
+          </label>
+          <label>
+            Prints
+            <input
+              type="number"
+              required
+              min="1"
+              max="1000000"
+              step="1"
+              value={grantForm.amount}
+              onChange={(event) => setGrantForm((current) => ({ ...current, amount: event.target.value }))}
+              placeholder="100"
+            />
+          </label>
+          <label>
+            Note
+            <input
+              type="text"
+              maxLength={500}
+              value={grantForm.note}
+              onChange={(event) => setGrantForm((current) => ({ ...current, note: event.target.value }))}
+              placeholder="Reason for this grant"
+            />
+          </label>
+          <button type="submit" disabled={granting}>
+            <Gift size={16} /> {granting ? 'Granting...' : 'Grant prints'}
+          </button>
+        </form>
+        {grantResult && (
+          <div className={`print-grant-result ${grantResult.type}`}>{grantResult.message}</div>
+        )}
+      </section>
+
+      <div className="affiliate-toolbar">
+        <div className="affiliate-filters" role="tablist" aria-label="Request status">
+          {FILTERS.map((status) => (
+            <button type="button" role="tab" aria-selected={filter === status} className={filter === status ? 'active' : ''} onClick={() => setFilter(status)} key={status}>
+              {label(status)} <span>{counts[status]}</span>
+            </button>
+          ))}
+        </div>
+        <label className="affiliate-search"><Search size={16} /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search requests" /></label>
+      </div>
+      {error && <div className="affiliate-error">Could not load affiliate requests: {error}</div>}
+      {loading && <div className="affiliate-empty">Loading affiliate requests...</div>}
+      {!loading && !error && visibleRequests.length === 0 && (
+        <div className="affiliate-empty">No {filter === 'all' ? '' : `${filter} `}requests found.</div>
+      )}
+      {!loading && visibleRequests.length > 0 && (
+        <div className="affiliate-list">
+          {visibleRequests.map((request) => {
+            const status = displayStatus(request.status);
+            return (
+              <article className="affiliate-card" key={request.id}>
+                <div className="affiliate-card-top">
+                  <div className="affiliate-applicant">
+                    <div className="affiliate-avatar">{(request.name || request.email || '?').charAt(0).toUpperCase()}</div>
+                    <div><h2>{request.name || 'Unnamed applicant'}</h2><a href={`mailto:${request.email}`}>{request.email}</a></div>
+                  </div>
+                  <span className={`affiliate-status ${status}`}>{status}</span>
+                </div>
+                <dl className="affiliate-details">
+                  <div><dt>Primary channel</dt><dd>{label(request.primary_channel)}</dd></div>
+                  <div><dt>Audience size</dt><dd>{request.audience_size?.toLocaleString?.() || request.audience_size || 'Not provided'}</dd></div>
+                  <div><dt>Requested code</dt><dd>{request.requested_affiliate_code || 'No preference'}</dd></div>
+                  <div><dt>Submitted</dt><dd>{formatDate(request.created_at)}</dd></div>
+                  {status !== 'pending' && <div><dt>Decision date</dt><dd>{formatDate(request.reviewed_at || request.updated_at)}</dd></div>}
+                </dl>
+                <div className="affiliate-message"><span>Application message</span><p>{request.message || 'No message provided.'}</p></div>
+                {status === 'pending' ? (
+                  <div className="affiliate-actions">
+                    <button type="button" className="reject" onClick={() => openDecision(request, 'rejected')}><X size={16} /> Reject</button>
+                    <button type="button" className="approve" onClick={() => openDecision(request, 'approved')}><Check size={16} /> Approve</button>
+                  </div>
+                ) : (
+                  <>
+                    <div className="affiliate-response-note">
+                      <Check size={15} />
+                      {request.decision_email_status === 'sent'
+                        ? 'Decision saved and email sent'
+                        : 'Decision saved to the applicant profile'}
+                    </div>
+                    {request.decision_message && (
+                      <div className="affiliate-decision-message">
+                        <span>Profile and email message</span>
+                        <p>{request.decision_message}</p>
+                      </div>
+                    )}
+                    {status === 'approved' && request.affiliate_code && (
+                      <div className="affiliate-link">
+                        <div>
+                          <span>{request.affiliate_link ? 'Affiliate link' : 'Affiliate code'}</span>
+                          <strong>{request.affiliate_link || request.affiliate_code}</strong>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => navigator.clipboard.writeText(request.affiliate_link || request.affiliate_code)}
+                        >
+                          {request.affiliate_link ? <ExternalLink size={15} /> : <Copy size={15} />}
+                          {request.affiliate_link ? 'Copy link' : 'Copy code'}
+                        </button>
+                      </div>
+                    )}
+                  </>
+                )}
+              </article>
+            );
+          })}
+        </div>
+      )}
+      {dialog && (
+        <div className="affiliate-modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !sending) setDialog(null); }}>
+          <form className="affiliate-modal" onSubmit={submitDecision}>
+            <div className="affiliate-modal-title">
+              <div>
+                <span>{dialog.action === 'approved' ? 'Approve application' : 'Reject application'}</span>
+                <p>
+                  {dialog.action === 'approved'
+                    ? `This updates the profile, creates a unique affiliate ${dialog.approvalType === 'link' ? 'link' : 'code'}, and emails ${dialog.request.name || dialog.request.email}.`
+                    : `This updates the profile status and emails ${dialog.request.name || dialog.request.email}.`}
+                </p>
+              </div>
+              <button type="button" aria-label="Close" onClick={() => setDialog(null)} disabled={sending}><X size={20} /></button>
+            </div>
+            <div className="affiliate-requested-code">
+              <span>Requested affiliate code</span>
+              <strong>{dialog.request.requested_affiliate_code || 'No preference provided'}</strong>
+            </div>
+            {dialog.action === 'approved' && (
+              <>
+              <div className="affiliate-approval-type">
+                <label>
+                  <input
+                    type="radio"
+                    name="approvalType"
+                    value="code"
+                    checked={dialog.approvalType !== 'link'}
+                    onChange={() => setDialog((current) => ({ ...current, approvalType: 'code' }))}
+                  />
+                  Approve with code
+                </label>
+                <label>
+                  <input
+                    type="radio"
+                    name="approvalType"
+                    value="link"
+                    checked={dialog.approvalType === 'link'}
+                    onChange={() => setDialog((current) => ({ ...current, approvalType: 'link' }))}
+                  />
+                  Approve with VIP link
+                </label>
+              </div>
+              <label>
+                Affiliate code
+                <input
+                  required
+                  minLength={3}
+                  maxLength={32}
+                  pattern="[A-Za-z0-9_-]{3,32}"
+                  value={dialog.affiliateCode}
+                  onChange={(event) => setDialog((current) => ({ ...current, affiliateCode: event.target.value.toUpperCase().replace(/[^A-Z0-9_-]/g, '') }))}
+                  placeholder="Affiliate code"
+                />
+              </label>
+              </>
+            )}
+            <label>
+              Profile and email message
+              <textarea
+                required
+                rows={6}
+                value={dialog.message}
+                onChange={(event) => setDialog((current) => ({ ...current, message: event.target.value }))}
+              />
+            </label>
+            {dialog.error && <div className="affiliate-error">{dialog.error}</div>}
+            <div className="affiliate-modal-actions">
+              <button type="button" className="cancel" onClick={() => setDialog(null)} disabled={sending}>Cancel</button>
+              <button type="submit" className={dialog.action === 'approved' ? 'approve' : 'reject'} disabled={sending || !dialog.message.trim()}>
+                {sending ? 'Sending...' : dialog.action === 'approved' ? 'Approve & send email' : 'Reject & send email'}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+    </section>
+  );
+}

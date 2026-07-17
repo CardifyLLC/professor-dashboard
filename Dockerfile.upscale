@@ -1,0 +1,41 @@
+FROM node:20-bookworm-slim
+
+ARG REAL_ESRGAN_RELEASE_URL=https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/realesrgan-ncnn-vulkan-20220424-ubuntu.zip
+
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    curl \
+    unzip \
+    libvulkan1 \
+    mesa-vulkan-drivers \
+    vulkan-tools \
+  && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /opt/realesrgan
+RUN curl -fL "$REAL_ESRGAN_RELEASE_URL" -o realesrgan.zip \
+  && test -s realesrgan.zip \
+  && unzip realesrgan.zip \
+  && rm realesrgan.zip \
+  && mkdir -p /opt/realesrgan-runtime \
+  && bin_path="$(find /opt/realesrgan -name realesrgan-ncnn-vulkan -type f | head -n 1)" \
+  && cp -R "$(dirname "$bin_path")"/. /opt/realesrgan-runtime/ \
+  && chmod +x /opt/realesrgan-runtime/realesrgan-ncnn-vulkan
+
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci --omit=dev
+COPY server ./server
+
+ENV PORT=8787
+ENV REAL_ESRGAN_BIN=/opt/realesrgan-runtime/realesrgan-ncnn-vulkan
+ENV REAL_ESRGAN_CWD=/opt/realesrgan-runtime
+ENV REAL_ESRGAN_MODEL=realesrgan-x4plus
+ENV REAL_ESRGAN_SCALE=4
+ENV REAL_ESRGAN_GPU_ID=
+ENV REAL_ESRGAN_TILE_SIZE=256
+ENV REAL_ESRGAN_OUTPUT_FORMAT=png
+ENV REQUEST_TIMEOUT_MS=600000
+EXPOSE 8787
+
+CMD ["npm", "start"]
