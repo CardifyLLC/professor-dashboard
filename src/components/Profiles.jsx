@@ -30,6 +30,8 @@ const avatarColor = (str) => {
   return avatarColors[Math.abs(hash) % avatarColors.length];
 };
 
+const escapeCsvCell = (value) => `"${String(value ?? '').replace(/"/g, '""')}"`;
+
 const AvatarCircle = ({ avatarUrl, initials, color }) => {
   const [imgFailed, setImgFailed] = React.useState(false);
   const showImg = avatarUrl && !imgFailed;
@@ -62,6 +64,7 @@ const Profiles = () => {
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [exporting, setExporting] = useState(false);
 
   // Filters
   const [search, setSearch] = useState('');
@@ -70,6 +73,46 @@ const Profiles = () => {
 
   // Expanded profile
   const [expandedId, setExpandedId] = useState(null);
+
+  const downloadAllEmails = async () => {
+    setExporting(true);
+    setError(null);
+
+    try {
+      const pageSize = 1000;
+      const allProfiles = [];
+
+      for (let from = 0; ; from += pageSize) {
+        const { data, error: exportError } = await supabaseAdmin
+          .from('profiles')
+          .select('email')
+          .order('created_at', { ascending: false })
+          .range(from, from + pageSize - 1);
+
+        if (exportError) throw exportError;
+        allProfiles.push(...(data || []));
+        if (!data || data.length < pageSize) break;
+      }
+
+      const emails = allProfiles
+        .map((profile) => profile.email?.trim())
+        .filter(Boolean);
+      const csv = ['Email', ...emails].map(escapeCsvCell).join('\r\n');
+      const blob = new Blob([`\uFEFF${csv}`], { type: 'text/csv;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `profile-emails-${new Date().toISOString().slice(0, 10)}.csv`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      setError(err.message || 'Failed to download profile emails');
+    } finally {
+      setExporting(false);
+    }
+  };
 
   useEffect(() => {
     const load = async () => {
@@ -124,7 +167,28 @@ const Profiles = () => {
 
   return (
     <div>
-      <h1 className="page-title">Profiles</h1>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '16px', marginBottom: '30px' }}>
+        <h1 className="page-title" style={{ marginBottom: 0 }}>Profiles</h1>
+        <button
+          type="button"
+          onClick={downloadAllEmails}
+          disabled={exporting}
+          style={{
+            padding: '9px 16px',
+            borderRadius: '8px',
+            border: '1px solid var(--accent-primary)',
+            background: 'var(--accent-primary)',
+            color: '#fff',
+            fontSize: '0.875rem',
+            fontWeight: '600',
+            cursor: exporting ? 'wait' : 'pointer',
+            opacity: exporting ? 0.65 : 1,
+            whiteSpace: 'nowrap',
+          }}
+        >
+          {exporting ? 'Downloading...' : 'Download all'}
+        </button>
+      </div>
 
       {/* Filters */}
       <div style={{ display: 'flex', gap: '12px', marginBottom: '24px', flexWrap: 'wrap', alignItems: 'center' }}>
