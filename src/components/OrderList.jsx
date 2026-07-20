@@ -234,7 +234,12 @@ const OrderList = ({ orders, onSelectOrder, page, setPage, totalCount, pageSize,
                                 </span>
                             </td>
                             <td>{formatCurrency(order.total_amount_cents)}</td>
-                            <td>{order.quantity} cards</td>
+                            <td>
+                                <div>{order.quantity} cards</div>
+                                <div style={{ fontSize: '0.8em', fontWeight: 600, color: 'var(--text-muted)' }}>
+                                    {order.deck_quantity || order.metadata?.deckQuantity || 1} {(order.deck_quantity || order.metadata?.deckQuantity || 1) === 1 ? 'deck' : 'decks'}
+                                </div>
+                            </td>
                             <td onClick={e => e.stopPropagation()}>
                                 {normalizedStatus === 'completed' ? (
                                     <button
