@@ -418,6 +418,10 @@ const OrderDetail = ({ order, onClose, onOrderUpdated }) => {
                             <div className="detail-section">
                                 <h3>Customer Information</h3>
                                 <div className="info-row">
+                                    <span className="info-label">Decks Ordered</span>
+                                    <span style={{ fontWeight: 700 }}>{order.deck_quantity || order.metadata?.deckQuantity || 1}</span>
+                                </div>
+                                <div className="info-row">
                                     <span className="info-label">Name</span>
                                     <span>{order.customer_name}</span>
                                 </div>
