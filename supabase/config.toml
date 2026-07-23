@@ -1,2 +1,5 @@
 [functions.orders-api]
 verify_jwt = false
+
+[functions.affiliate-discord-notification]
+verify_jwt = false
