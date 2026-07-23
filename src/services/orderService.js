@@ -44,6 +44,7 @@ const getOrderAffiliateCode = (order) => {
     return [
         order?.affiliate_code, order?.referral_code, order?.coupon_code,
         metadata.affiliate_code, metadata.affiliateCode,
+        metadata.affiliate_referral_code, metadata.affiliateReferralCode,
         metadata.referral_code, metadata.referralCode,
         metadata.coupon_code, metadata.couponCode,
     ].find((value) => typeof value === 'string' && value.trim())?.trim().toUpperCase() || '';
