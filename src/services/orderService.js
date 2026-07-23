@@ -39,6 +39,55 @@ export const fetchAllOrders = async () => {
     return allOrders;
 };
 
+const getOrderAffiliateCode = (order) => {
+    const metadata = order?.metadata && typeof order.metadata === 'object' ? order.metadata : {};
+    return [
+        order?.affiliate_code, order?.referral_code, order?.coupon_code,
+        metadata.affiliate_code, metadata.affiliateCode,
+        metadata.referral_code, metadata.referralCode,
+        metadata.coupon_code, metadata.couponCode,
+    ].find((value) => typeof value === 'string' && value.trim())?.trim().toUpperCase() || '';
+};
+
+/**
+ * Returns orders attributed to an approved affiliate. Affiliate links apply
+ * their code at checkout, so link and code orders share the same attribution.
+ */
+export const fetchAffiliateOrders = async () => {
+    const { data: affiliates, error: affiliatesError } = await ordersClient
+        .from('affiliate_applications')
+        .select('id,name,email,affiliate_code,affiliate_link,status')
+        .eq('status', 'approved')
+        .not('affiliate_code', 'is', null);
+    if (affiliatesError) throw affiliatesError;
+
+    const affiliatesByCode = new Map((affiliates || [])
+        .filter((affiliate) => affiliate.affiliate_code)
+        .map((affiliate) => [affiliate.affiliate_code.trim().toUpperCase(), affiliate]));
+    if (affiliatesByCode.size === 0) return [];
+
+    const pageSize = 1000;
+    let from = 0;
+    const attributedOrders = [];
+    while (true) {
+        const { data, error } = await ordersClient
+            .from('orders')
+            .select('id,customer_name,customer_email,created_at,status,total_amount_cents,quantity,coupon_code,metadata')
+            .order('created_at', { ascending: false })
+            .range(from, from + pageSize - 1);
+        if (error) throw error;
+        const page = data || [];
+        page.forEach((order) => {
+            const affiliateCode = getOrderAffiliateCode(order);
+            const affiliate = affiliatesByCode.get(affiliateCode);
+            if (affiliate) attributedOrders.push({ ...order, affiliateCode, affiliate });
+        });
+        if (page.length < pageSize) break;
+        from += pageSize;
+    }
+    return attributedOrders;
+};
+
 /**
  * Fetches paid orders with only the fields BatchPro needs.
  * This is much faster than fetching all orders then filtering client-side.

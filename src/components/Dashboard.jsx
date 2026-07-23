@@ -13,6 +13,7 @@ import Subscribers from './Subscribers';
 import DeletedOrdersStats from './DeletedOrdersStats';
 import OrdersMap from './OrdersMap';
 import AffiliateRequests from './AffiliateRequests';
+import AffiliateOrders from './AffiliateOrders';
 
 const Dashboard = () => {
     const [orders, setOrders] = useState([]);
@@ -231,6 +232,12 @@ const Dashboard = () => {
                                 <span>🤝</span> Affiliate Requests
                             </div>
                             <div
+                                className={`nav-item ${activeView === 'affiliate-orders' ? 'active' : ''}`}
+                                onClick={() => { setActiveView('affiliate-orders'); setMobileMenuOpen(false); }}
+                            >
+                                <span>🔗</span> Affiliate Orders
+                            </div>
+                            <div
                                 className={`nav-item ${activeView === 'analytics' ? 'active' : ''}`}
                                 onClick={() => { setActiveView('analytics'); setMobileMenuOpen(false); }}
                             >
@@ -443,6 +450,10 @@ const Dashboard = () => {
 
                                     {activeView === 'affiliates' && (
                                         <AffiliateRequests />
+                                    )}
+
+                                    {activeView === 'affiliate-orders' && (
+                                        <AffiliateOrders onSelectOrder={handleSelectOrder} />
                                     )}
 
                                     {activeView === 'analytics' && (

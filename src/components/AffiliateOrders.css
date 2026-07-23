@@ -1,0 +1,23 @@
+.affiliate-orders-heading { display:flex; align-items:center; justify-content:space-between; gap:16px; margin-bottom:18px; }
+.affiliate-orders-heading .page-title { margin:0 0 4px; }
+.affiliate-orders-heading p { margin:0; color:var(--text-muted); font-size:.86rem; }
+.affiliate-orders-heading button { display:flex; align-items:center; gap:7px; padding:8px 12px; color:var(--text-primary); background:var(--bg-card); border:1px solid var(--border-color); border-radius:8px; cursor:pointer; }
+.affiliate-orders-heading button:disabled { opacity:.6; cursor:wait; }
+.affiliate-order-stats { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px; margin-bottom:16px; }
+.affiliate-order-stats>div { display:flex; align-items:center; gap:11px; padding:16px; color:#34d399; background:var(--bg-card); border:1px solid var(--border-color); border-radius:11px; }
+.affiliate-order-stats span { color:var(--text-muted); font-size:.76rem; }
+.affiliate-order-stats strong { display:block; margin-bottom:2px; color:var(--text-primary); font-size:1.15rem; }
+.affiliate-orders-filter { display:flex; align-items:center; gap:10px; margin-bottom:14px; }
+.affiliate-orders-filter label { color:var(--text-muted); font-size:.78rem; font-weight:600; }
+.affiliate-orders-filter select { min-width:260px; padding:9px 11px; color:var(--text-primary); background:var(--bg-card); border:1px solid var(--border-color); border-radius:8px; }
+.affiliate-orders-message { padding:32px; color:var(--text-muted); text-align:center; background:var(--bg-card); border:1px solid var(--border-color); border-radius:10px; }
+.affiliate-orders-message.error { color:#ef4444; border-color:rgba(239,68,68,.35); }
+.affiliate-orders-table td { cursor:pointer; }
+.affiliate-orders-table td strong,.affiliate-orders-table td span:not(.status-badge) { display:block; }
+.affiliate-orders-table td span:not(.status-badge) { margin-top:3px; color:var(--text-muted); font-size:.76rem; }
+@media(max-width:760px) {
+  .affiliate-order-stats { grid-template-columns:1fr; }
+  .affiliate-orders-filter { align-items:stretch; flex-direction:column; }
+  .affiliate-orders-filter select { width:100%; min-width:0; }
+  .affiliate-orders-table { overflow-x:auto; }
+}
