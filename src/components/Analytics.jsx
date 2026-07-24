@@ -19,8 +19,8 @@ const REJECTION_LABEL = Object.fromEntries(
 
 const DATE_RANGES = [
     { label: '7 days', days: 7 },
+    { label: '14 days', days: 14 },
     { label: '30 days', days: 30 },
-    { label: '90 days', days: 90 },
     { label: 'All time', days: null },
 ];
 
@@ -160,6 +160,9 @@ const Analytics = ({ orders, onRefreshOrders, refreshingOrders = false }) => {
     const [errorSummary, setErrorSummary] = useState([]);
     const [recentEvents, setRecentEvents] = useState([]);
     const [deletedOrderStats, setDeletedOrderStats] = useState([]);
+    const [stripeAnalytics, setStripeAnalytics] = useState(null);
+    const [stripeError, setStripeError] = useState('');
+    const [refreshVersion, setRefreshVersion] = useState(0);
     const [loading, setLoading] = useState(true);
     const [aiModel, setAiModel] = useState('claude');
     const [aiInsight, setAiInsight] = useState('');
@@ -177,6 +180,7 @@ const Analytics = ({ orders, onRefreshOrders, refreshingOrders = false }) => {
     useEffect(() => {
         const fetchAll = async () => {
             setLoading(true);
+            setStripeError('');
             const cutoff = rangeStart(rangeDays)?.toISOString() || null;
 
             const q = (table, col = 'day') =>
@@ -184,7 +188,21 @@ const Analytics = ({ orders, onRefreshOrders, refreshingOrders = false }) => {
                     ? supabase.from(table).select('*').gte(col, cutoff).order(col, { ascending: false })
                     : supabase.from(table).select('*').order(col, { ascending: false });
 
-            const [df, of, ft, np, er, ev, deleted] = await Promise.all([
+            const stripePromise = (async () => {
+                const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+                const headers = await getAdminAuthHeaders();
+                const range = rangeDays || 'all';
+                const timezoneOffset = new Date().getTimezoneOffset();
+                const response = await fetch(
+                    `${supabaseUrl}/functions/v1/stripe-analytics?days=${range}&timezone_offset_minutes=${timezoneOffset}`,
+                    { headers }
+                );
+                const result = await response.json();
+                if (!response.ok) throw new Error(result.error || 'Unable to load Stripe analytics.');
+                return result;
+            })();
+
+            const [df, of, ft, np, er, ev, deleted, stripe] = await Promise.all([
                 q('v_design_funnel_summary'),
                 q('v_order_funnel_summary'),
                 q('v_feature_adoption', 'week'),
@@ -194,6 +212,7 @@ const Analytics = ({ orders, onRefreshOrders, refreshingOrders = false }) => {
                     ? supabase.from('analytics_events').select('*').gte('created_at', cutoff).order('created_at', { ascending: false }).limit(25)
                     : supabase.from('analytics_events').select('*').order('created_at', { ascending: false }).limit(25),
                 supabase.from('order_daily_stats').select('*').order('stat_date', { ascending: false }),
+                stripePromise.catch((error) => ({ error })),
             ]);
 
             setDesignFunnel(df.data || []);
@@ -203,11 +222,17 @@ const Analytics = ({ orders, onRefreshOrders, refreshingOrders = false }) => {
             setErrorSummary(er.data || []);
             setRecentEvents(ev.data || []);
             setDeletedOrderStats(deleted.data || []);
+            if (stripe?.error) {
+                setStripeAnalytics(null);
+                setStripeError(stripe.error.message || 'Unable to load Stripe analytics.');
+            } else {
+                setStripeAnalytics(stripe);
+            }
             setLoading(false);
         };
 
         fetchAll();
-    }, [rangeDays]);
+    }, [rangeDays, refreshVersion]);
 
     // ── Order metrics from prop ───────────────────────────────────────────────
     const filtered = useMemo(() => {
@@ -288,17 +313,17 @@ const Analytics = ({ orders, onRefreshOrders, refreshingOrders = false }) => {
             buckets.push({ label: key.slice(5), date: key, orders: 0, revenue: 0 });
         }
         const map = Object.fromEntries(buckets.map((b) => [b.date, b]));
-        filtered.forEach((o) => {
-            const key = localDateKey(o.created_at);
+        (stripeAnalytics?.daily || []).forEach((row) => {
+            const key = row.date;
             if (map[key]) {
-                map[key].orders += 1;
-                if (isRevenueOrder(o) && !isRefundedOrder(o)) {
-                    map[key].revenue += Number(o.total_amount_cents || 0);
-                }
+                map[key].orders += Number(row.orders || 0);
+                map[key].revenue += Number(row.net || 0);
             }
         });
         return buckets;
-    }, [filtered, rangeDays]);
+    }, [stripeAnalytics, rangeDays]);
+
+    const stripeSummary = stripeAnalytics?.summary || null;
 
     // ── Design funnel aggregation ─────────────────────────────────────────────
     const designFunnelAgg = useMemo(() => {
@@ -435,7 +460,10 @@ const Analytics = ({ orders, onRefreshOrders, refreshingOrders = false }) => {
                     {onRefreshOrders && (
                         <button
                             type="button"
-                            onClick={onRefreshOrders}
+                            onClick={() => {
+                                onRefreshOrders();
+                                setRefreshVersion((value) => value + 1);
+                            }}
                             disabled={refreshingOrders}
                             style={{
                                 padding: '6px 14px', borderRadius: '8px', border: '1px solid var(--border-color)',
@@ -458,35 +486,45 @@ const Analytics = ({ orders, onRefreshOrders, refreshingOrders = false }) => {
                 </div>
             </div>
 
+            {stripeError && (
+                <div style={{
+                    marginBottom: '1rem', padding: '0.75rem 1rem', borderRadius: '8px',
+                    color: '#fca5a5', background: '#7f1d1d33', border: '1px solid #ef444455',
+                    fontSize: '0.82rem',
+                }}>
+                    Stripe analytics could not be loaded: {stripeError}
+                </div>
+            )}
+
             {/* ── Order summary cards ── */}
             <div className="stats-grid" style={{ marginBottom: '1.5rem' }}>
                 <StatCard
-                    label="Total Orders"
-                    value={fmtNum(om.total)}
-                    sub={!rangeDays && om.archivedOrders ? `${fmtNum(om.archivedOrders)} restored from deleted-order history` : undefined}
+                    label="Paid Orders"
+                    value={fmtNum(stripeSummary?.total_orders)}
+                    sub="Stripe"
                 />
-                <StatCard label="Completed" value={fmtNum(om.completed)} color="#22c55e" />
-                <StatCard label="In Progress" value={fmtNum(om.inProgress)} color="#8b5cf6" />
-                <StatCard label="Pending" value={fmtNum(om.pending)} color="#f59e0b" />
-                <StatCard label="Cancelled" value={fmtNum(om.cancelled)} color="#ef4444" />
-                <StatCard label="Refunded" value={fmtNum(om.refunded)} sub={fmtPct(om.refunded, om.total) + ' of orders'} color="#ef4444" />
-                <StatCard label="Gross Revenue" value={fmt$(om.gross)} />
-                <StatCard label="Refunded Amount" value={fmt$(om.refundedCents)} color="#ef4444" />
-                <StatCard label="Net Revenue" value={fmt$(om.net)} color="#22c55e" />
-                <StatCard label="Avg Order Value" value={fmt$(om.avgCents)} sub="Paid, non-refunded orders" />
-                <StatCard label="Total Cards" value={fmtNum(om.totalCards)} sub="Paid, non-refunded orders" />
-                <StatCard label="Unique Customers" value={fmtNum(om.uniqueCustomers)} sub="Paid, non-refunded orders" />
+                <StatCard label="Refunded Orders" value={fmtNum(stripeSummary?.refunded_orders)} sub="Stripe" color="#ef4444" />
+                <StatCard label="Gross Revenue" value={fmt$(stripeSummary?.gross_revenue_cents)} sub="Stripe" />
+                <StatCard label="Refunded Amount" value={fmt$(stripeSummary?.refunded_amount_cents)} sub="Stripe" color="#ef4444" />
+                <StatCard label="Net Revenue" value={fmt$(stripeSummary?.net_revenue_cents)} sub="Stripe" color="#22c55e" />
+                <StatCard label="Avg Order Value" value={fmt$(stripeSummary?.average_order_value_cents)} sub="Stripe paid orders" />
+                <StatCard label="Unique Customers" value={fmtNum(stripeSummary?.unique_customers)} sub="Stripe" />
+                <StatCard label="Completed" value={fmtNum(om.completed)} sub="Order workflow" color="#22c55e" />
+                <StatCard label="In Progress" value={fmtNum(om.inProgress)} sub="Order workflow" color="#8b5cf6" />
+                <StatCard label="Pending" value={fmtNum(om.pending)} sub="Order workflow" color="#f59e0b" />
+                <StatCard label="Cancelled" value={fmtNum(om.cancelled)} sub="Order workflow" color="#ef4444" />
+                <StatCard label="Total Cards" value={fmtNum(om.totalCards)} sub="Order workflow" />
             </div>
 
             {/* ── Charts row ── */}
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '1.25rem', marginBottom: '1.25rem' }}>
-                <SectionCard title={`Orders — last ${Math.min(rangeDays || 30, 30)} days`}>
+                <SectionCard title={`Stripe paid orders — last ${Math.min(rangeDays || 30, 30)} days`}>
                     <VBarChart data={dailyData} valueKey="orders" color="var(--accent-primary)" />
                     <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: '4px' }}>
                         <span>{dailyData[0]?.label}</span><span>{dailyData[dailyData.length - 1]?.label}</span>
                     </div>
                 </SectionCard>
-                <SectionCard title={`Net revenue — last ${Math.min(rangeDays || 30, 30)} days`}>
+                <SectionCard title={`Stripe net revenue — last ${Math.min(rangeDays || 30, 30)} days`}>
                     <VBarChart data={dailyData} valueKey="revenue" color="#22c55e" formatVal={fmt$} />
                     <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: '4px' }}>
                         <span>{dailyData[0]?.label}</span><span>{dailyData[dailyData.length - 1]?.label}</span>
