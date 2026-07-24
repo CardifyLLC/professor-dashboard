@@ -460,7 +460,11 @@ const Dashboard = () => {
                                         loadingAll ? (
                                             <div className="loading">Loading analytics data...</div>
                                         ) : (
-                                            <Analytics orders={allOrders} />
+                                            <Analytics
+                                                orders={allOrders}
+                                                onRefreshOrders={loadAllOrders}
+                                                refreshingOrders={loadingAll}
+                                            />
                                         )
                                     )}
 
