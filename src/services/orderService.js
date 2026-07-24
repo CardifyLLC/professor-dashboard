@@ -398,9 +398,14 @@ export const updateOrderStatus = async (orderId, status) => {
         throw new Error(`Unsupported order status: ${status}`);
     }
 
+    const changes = {
+        status,
+        ...(status === 'completed' ? { completed_at: new Date().toISOString() } : {}),
+    };
+
     const { data, error } = await ordersClient
         .from('orders')
-        .update({ status })
+        .update(changes)
         .eq('id', orderId)
         .select()
         .single();
