@@ -24,6 +24,37 @@ const DATE_RANGES = [
     { label: 'All time', days: null },
 ];
 
+const REVENUE_STATUSES = new Set(['paid', 'processing', 'shipped', 'completed']);
+const normalizedStatus = (order) => String(order?.status || '').toLowerCase();
+const normalizedPaymentStatus = (order) => String(order?.payment_status || '').toLowerCase();
+const isRefundedOrder = (order) => normalizedPaymentStatus(order) === 'refunded';
+const isRevenueOrder = (order) => REVENUE_STATUSES.has(normalizedStatus(order)) || isRefundedOrder(order);
+const localDateKey = (value) => {
+    const date = value instanceof Date ? value : new Date(value);
+    if (Number.isNaN(date.getTime())) return '';
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+};
+const rangeStart = (days) => {
+    if (!days) return null;
+    const start = new Date();
+    start.setHours(0, 0, 0, 0);
+    start.setDate(start.getDate() - (days - 1));
+    return start;
+};
+const parseArchivedCustomers = (value) => {
+    if (Array.isArray(value)) return value;
+    if (typeof value !== 'string') return [];
+    try {
+        const parsed = JSON.parse(value);
+        return Array.isArray(parsed) ? parsed : [];
+    } catch {
+        return [];
+    }
+};
+
 const FUNNEL_STEPS = ['import', 'customize', 'preview', 'checkout', 'completed'];
 const ORDER_FUNNEL_STEPS = ['checkout_opened', 'payment_initiated', 'payment_completed'];
 const FUNNEL_STEP_LABEL = {
@@ -120,7 +151,7 @@ const Pill = ({ text, color }) => (
 
 // ── Main ──────────────────────────────────────────────────────────────────────
 
-const Analytics = ({ orders }) => {
+const Analytics = ({ orders, onRefreshOrders, refreshingOrders = false }) => {
     const [rangeDays, setRangeDays] = useState(30);
     const [designFunnel, setDesignFunnel] = useState([]);
     const [orderFunnel, setOrderFunnel] = useState([]);
@@ -128,6 +159,7 @@ const Analytics = ({ orders }) => {
     const [nps, setNps] = useState([]);
     const [errorSummary, setErrorSummary] = useState([]);
     const [recentEvents, setRecentEvents] = useState([]);
+    const [deletedOrderStats, setDeletedOrderStats] = useState([]);
     const [loading, setLoading] = useState(true);
     const [aiModel, setAiModel] = useState('claude');
     const [aiInsight, setAiInsight] = useState('');
@@ -145,16 +177,14 @@ const Analytics = ({ orders }) => {
     useEffect(() => {
         const fetchAll = async () => {
             setLoading(true);
-            const cutoff = rangeDays
-                ? new Date(Date.now() - rangeDays * 86400000).toISOString()
-                : null;
+            const cutoff = rangeStart(rangeDays)?.toISOString() || null;
 
             const q = (table, col = 'day') =>
                 cutoff
                     ? supabase.from(table).select('*').gte(col, cutoff).order(col, { ascending: false })
                     : supabase.from(table).select('*').order(col, { ascending: false });
 
-            const [df, of, ft, np, er, ev] = await Promise.all([
+            const [df, of, ft, np, er, ev, deleted] = await Promise.all([
                 q('v_design_funnel_summary'),
                 q('v_order_funnel_summary'),
                 q('v_feature_adoption', 'week'),
@@ -163,6 +193,7 @@ const Analytics = ({ orders }) => {
                 cutoff
                     ? supabase.from('analytics_events').select('*').gte('created_at', cutoff).order('created_at', { ascending: false }).limit(25)
                     : supabase.from('analytics_events').select('*').order('created_at', { ascending: false }).limit(25),
+                supabase.from('order_daily_stats').select('*').order('stat_date', { ascending: false }),
             ]);
 
             setDesignFunnel(df.data || []);
@@ -171,6 +202,7 @@ const Analytics = ({ orders }) => {
             setNps(np.data || []);
             setErrorSummary(er.data || []);
             setRecentEvents(ev.data || []);
+            setDeletedOrderStats(deleted.data || []);
             setLoading(false);
         };
 
@@ -180,29 +212,71 @@ const Analytics = ({ orders }) => {
     // ── Order metrics from prop ───────────────────────────────────────────────
     const filtered = useMemo(() => {
         if (!rangeDays) return orders;
-        const cutoff = new Date(Date.now() - rangeDays * 86400000);
+        const cutoff = rangeStart(rangeDays);
         return orders.filter((o) => new Date(o.created_at) >= cutoff);
     }, [orders, rangeDays]);
 
     const om = useMemo(() => {
-        const total = filtered.length;
-        const completed = filtered.filter((o) => ['completed', 'shipped'].includes(String(o.status).toLowerCase())).length;
-        const inProgress = filtered.filter((o) => ['processing', 'paid'].includes(String(o.status).toLowerCase())).length;
-        const pending = filtered.filter((o) => String(o.status).toLowerCase() === 'pending').length;
-        const cancelled = filtered.filter((o) => String(o.status).toLowerCase() === 'cancelled').length;
-        const refunded = filtered.filter((o) => String(o.payment_status).toLowerCase() === 'refunded').length;
-        const gross = filtered.reduce((s, o) => s + (o.total_amount_cents || 0), 0);
-        const refundedCents = filtered.filter((o) => String(o.payment_status).toLowerCase() === 'refunded').reduce((s, o) => s + (o.total_amount_cents || 0), 0);
-        const net = gross - refundedCents;
-        const totalCards = filtered.reduce((s, o) => s + (o.quantity || 0), 0);
-        const avgCents = total > 0 ? Math.round(gross / total) : 0;
-        const uniqueCustomers = new Set(filtered.map((o) => o.customer_email).filter(Boolean)).size;
+        const archived = !rangeDays
+            ? deletedOrderStats.reduce((result, row) => ({
+                total: result.total + Number(row.total_orders || 0),
+                completed: result.completed + Number(row.completed_orders || 0),
+                paid: result.paid + Number(row.paid_orders || 0),
+                pending: result.pending + Number(row.pending_orders || 0),
+                cancelled: result.cancelled + Number(row.cancelled_orders || 0),
+                gross: result.gross + Number(row.gross_revenue_cents || 0),
+                refundedCents: result.refundedCents + Number(row.refunded_amount_cents || 0),
+                net: result.net + Number(row.net_revenue_cents || 0),
+                totalCards: result.totalCards + Number(row.total_cards || 0),
+                customerEmails: result.customerEmails.concat(
+                    parseArchivedCustomers(row.customers).map((customer) => customer?.email || customer?.customer_email).filter(Boolean)
+                ),
+            }), {
+                total: 0, completed: 0, paid: 0, pending: 0, cancelled: 0,
+                gross: 0, refundedCents: 0, net: 0, totalCards: 0, customerEmails: [],
+            })
+            : {
+                total: 0, completed: 0, paid: 0, pending: 0, cancelled: 0,
+                gross: 0, refundedCents: 0, net: 0, totalCards: 0, customerEmails: [],
+            };
+
+        const total = filtered.length + archived.total;
+        const completed = filtered.filter((o) => ['completed', 'shipped'].includes(String(o.status).toLowerCase())).length + archived.completed;
+        const inProgress = filtered.filter((o) => ['processing', 'paid'].includes(String(o.status).toLowerCase())).length + archived.paid;
+        const pending = filtered.filter((o) => String(o.status).toLowerCase() === 'pending').length + archived.pending;
+        const cancelled = filtered.filter((o) => String(o.status).toLowerCase() === 'cancelled').length + archived.cancelled;
+        const revenueOrders = filtered.filter(isRevenueOrder);
+        const paidOrders = revenueOrders.filter((o) => !isRefundedOrder(o));
+        const refundedOrders = revenueOrders.filter(isRefundedOrder);
+        const refunded = refundedOrders.length;
+        const gross = revenueOrders.reduce((s, o) => s + Number(o.total_amount_cents || 0), 0) + archived.gross;
+        const refundedCents = refundedOrders.reduce((s, o) => s + Number(o.total_amount_cents || 0), 0) + archived.refundedCents;
+        const net = revenueOrders.reduce((s, o) => (
+            isRefundedOrder(o) ? s : s + Number(o.total_amount_cents || 0)
+        ), 0) + archived.net;
+        const totalCards = paidOrders.reduce((s, o) => s + Number(o.quantity || 0), 0) + archived.totalCards;
+        const paidRevenue = paidOrders.reduce((s, o) => s + Number(o.total_amount_cents || 0), 0);
+        const archivedPaidOrders = archived.completed + archived.paid;
+        const avgDenominator = paidOrders.length + archivedPaidOrders;
+        const avgCents = avgDenominator > 0 ? Math.round((paidRevenue + archived.net) / avgDenominator) : 0;
+        const uniqueCustomers = new Set([
+            ...paidOrders.map((o) => o.customer_email).filter(Boolean),
+            ...archived.customerEmails,
+        ].map((email) => String(email).toLowerCase())).size;
         const statusCounts = {};
         filtered.forEach((o) => { const s = String(o.status || 'unknown').toLowerCase(); statusCounts[s] = (statusCounts[s] || 0) + 1; });
+        if (archived.completed) statusCounts.completed = (statusCounts.completed || 0) + archived.completed;
+        if (archived.paid) statusCounts.paid = (statusCounts.paid || 0) + archived.paid;
+        if (archived.pending) statusCounts.pending = (statusCounts.pending || 0) + archived.pending;
+        if (archived.cancelled) statusCounts.cancelled = (statusCounts.cancelled || 0) + archived.cancelled;
         const rejectionCounts = {};
         filtered.filter((o) => o.refund_reason_key).forEach((o) => { rejectionCounts[o.refund_reason_key] = (rejectionCounts[o.refund_reason_key] || 0) + 1; });
-        return { total, completed, inProgress, pending, cancelled, refunded, gross, refundedCents, net, totalCards, avgCents, uniqueCustomers, statusCounts, rejectionCounts };
-    }, [filtered]);
+        return {
+            total, completed, inProgress, pending, cancelled, refunded, gross, refundedCents,
+            net, totalCards, avgCents, uniqueCustomers, statusCounts, rejectionCounts,
+            archivedOrders: archived.total,
+        };
+    }, [deletedOrderStats, filtered, rangeDays]);
 
     // ── Daily chart data ──────────────────────────────────────────────────────
     const dailyData = useMemo(() => {
@@ -210,13 +284,18 @@ const Analytics = ({ orders }) => {
         const buckets = [];
         for (let i = days - 1; i >= 0; i--) {
             const d = new Date(); d.setDate(d.getDate() - i);
-            const key = d.toISOString().slice(0, 10);
+            const key = localDateKey(d);
             buckets.push({ label: key.slice(5), date: key, orders: 0, revenue: 0 });
         }
         const map = Object.fromEntries(buckets.map((b) => [b.date, b]));
         filtered.forEach((o) => {
-            const key = (o.created_at || '').slice(0, 10);
-            if (map[key]) { map[key].orders += 1; map[key].revenue += o.total_amount_cents || 0; }
+            const key = localDateKey(o.created_at);
+            if (map[key]) {
+                map[key].orders += 1;
+                if (isRevenueOrder(o) && !isRefundedOrder(o)) {
+                    map[key].revenue += Number(o.total_amount_cents || 0);
+                }
+            }
         });
         return buckets;
     }, [filtered, rangeDays]);
@@ -353,6 +432,21 @@ const Analytics = ({ orders }) => {
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '1rem', marginBottom: '1.5rem' }}>
                 <h1 className="page-title" style={{ margin: 0 }}>Analytics</h1>
                 <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap' }}>
+                    {onRefreshOrders && (
+                        <button
+                            type="button"
+                            onClick={onRefreshOrders}
+                            disabled={refreshingOrders}
+                            style={{
+                                padding: '6px 14px', borderRadius: '8px', border: '1px solid var(--border-color)',
+                                background: 'var(--bg-card)', color: 'var(--text-primary)',
+                                fontSize: '0.82rem', cursor: refreshingOrders ? 'wait' : 'pointer', fontWeight: '600',
+                                opacity: refreshingOrders ? 0.65 : 1,
+                            }}
+                        >
+                            {refreshingOrders ? 'Refreshing...' : 'Refresh data'}
+                        </button>
+                    )}
                     {DATE_RANGES.map(({ label, days }) => (
                         <button key={label} onClick={() => setRangeDays(days)} style={{
                             padding: '6px 14px', borderRadius: '8px', border: '1px solid var(--border-color)',
@@ -366,7 +460,11 @@ const Analytics = ({ orders }) => {
 
             {/* ── Order summary cards ── */}
             <div className="stats-grid" style={{ marginBottom: '1.5rem' }}>
-                <StatCard label="Total Orders" value={fmtNum(om.total)} />
+                <StatCard
+                    label="Total Orders"
+                    value={fmtNum(om.total)}
+                    sub={!rangeDays && om.archivedOrders ? `${fmtNum(om.archivedOrders)} restored from deleted-order history` : undefined}
+                />
                 <StatCard label="Completed" value={fmtNum(om.completed)} color="#22c55e" />
                 <StatCard label="In Progress" value={fmtNum(om.inProgress)} color="#8b5cf6" />
                 <StatCard label="Pending" value={fmtNum(om.pending)} color="#f59e0b" />
@@ -375,9 +473,9 @@ const Analytics = ({ orders }) => {
                 <StatCard label="Gross Revenue" value={fmt$(om.gross)} />
                 <StatCard label="Refunded Amount" value={fmt$(om.refundedCents)} color="#ef4444" />
                 <StatCard label="Net Revenue" value={fmt$(om.net)} color="#22c55e" />
-                <StatCard label="Avg Order Value" value={fmt$(om.avgCents)} />
-                <StatCard label="Total Cards" value={fmtNum(om.totalCards)} />
-                <StatCard label="Unique Customers" value={fmtNum(om.uniqueCustomers)} />
+                <StatCard label="Avg Order Value" value={fmt$(om.avgCents)} sub="Paid, non-refunded orders" />
+                <StatCard label="Total Cards" value={fmtNum(om.totalCards)} sub="Paid, non-refunded orders" />
+                <StatCard label="Unique Customers" value={fmtNum(om.uniqueCustomers)} sub="Paid, non-refunded orders" />
             </div>
 
             {/* ── Charts row ── */}
@@ -388,7 +486,7 @@ const Analytics = ({ orders }) => {
                         <span>{dailyData[0]?.label}</span><span>{dailyData[dailyData.length - 1]?.label}</span>
                     </div>
                 </SectionCard>
-                <SectionCard title={`Revenue — last ${Math.min(rangeDays || 30, 30)} days`}>
+                <SectionCard title={`Net revenue — last ${Math.min(rangeDays || 30, 30)} days`}>
                     <VBarChart data={dailyData} valueKey="revenue" color="#22c55e" formatVal={fmt$} />
                     <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: '4px' }}>
                         <span>{dailyData[0]?.label}</span><span>{dailyData[dailyData.length - 1]?.label}</span>
