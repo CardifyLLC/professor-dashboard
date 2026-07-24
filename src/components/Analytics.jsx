@@ -162,6 +162,7 @@ const Analytics = ({ orders, onRefreshOrders, refreshingOrders = false }) => {
     const [deletedOrderStats, setDeletedOrderStats] = useState([]);
     const [stripeAnalytics, setStripeAnalytics] = useState(null);
     const [stripeError, setStripeError] = useState('');
+    const [stripeLoading, setStripeLoading] = useState(true);
     const [refreshVersion, setRefreshVersion] = useState(0);
     const [loading, setLoading] = useState(true);
     const [aiModel, setAiModel] = useState('claude');
@@ -181,6 +182,7 @@ const Analytics = ({ orders, onRefreshOrders, refreshingOrders = false }) => {
         const fetchAll = async () => {
             setLoading(true);
             setStripeError('');
+            setStripeLoading(true);
             const cutoff = rangeStart(rangeDays)?.toISOString() || null;
 
             const q = (table, col = 'day') =>
@@ -228,6 +230,7 @@ const Analytics = ({ orders, onRefreshOrders, refreshingOrders = false }) => {
             } else {
                 setStripeAnalytics(stripe);
             }
+            setStripeLoading(false);
             setLoading(false);
         };
 
@@ -496,19 +499,47 @@ const Analytics = ({ orders, onRefreshOrders, refreshingOrders = false }) => {
                 </div>
             )}
 
+            {stripeLoading && (
+                <div
+                    aria-live="polite"
+                    aria-label="Loading Stripe analytics"
+                    style={{
+                        display: 'flex', alignItems: 'center', gap: '1rem',
+                        marginBottom: '1.25rem', padding: '1.1rem 1.25rem',
+                        borderRadius: '12px', border: '1px solid var(--border-color)',
+                        background: 'linear-gradient(110deg, var(--bg-card), var(--bg-secondary), var(--bg-card))',
+                        boxShadow: '0 10px 30px rgba(0, 0, 0, 0.12)',
+                    }}
+                >
+                    <div className="spinner" style={{
+                        width: '34px', height: '34px', flex: '0 0 34px',
+                        borderRadius: '50%', border: '3px solid rgba(59, 130, 246, 0.18)',
+                        borderTopColor: 'var(--accent-primary)',
+                    }} />
+                    <div>
+                        <div style={{ color: 'var(--text-primary)', fontWeight: '700', fontSize: '0.92rem' }}>
+                            Loading Stripe analytics
+                        </div>
+                        <div style={{ color: 'var(--text-muted)', fontSize: '0.78rem', marginTop: '3px' }}>
+                            Collecting paid orders, revenue, and refunds for this period…
+                        </div>
+                    </div>
+                </div>
+            )}
+
             {/* ── Order summary cards ── */}
             <div className="stats-grid" style={{ marginBottom: '1.5rem' }}>
                 <StatCard
                     label="Paid Orders"
-                    value={fmtNum(stripeSummary?.total_orders)}
-                    sub="Stripe"
+                    value={stripeLoading ? '—' : fmtNum(stripeSummary?.total_orders)}
+                    sub={stripeLoading ? 'Loading…' : 'Stripe'}
                 />
-                <StatCard label="Refunded Orders" value={fmtNum(stripeSummary?.refunded_orders)} sub="Stripe" color="#ef4444" />
-                <StatCard label="Gross Revenue" value={fmt$(stripeSummary?.gross_revenue_cents)} sub="Stripe" />
-                <StatCard label="Refunded Amount" value={fmt$(stripeSummary?.refunded_amount_cents)} sub="Stripe" color="#ef4444" />
-                <StatCard label="Net Revenue" value={fmt$(stripeSummary?.net_revenue_cents)} sub="Stripe" color="#22c55e" />
-                <StatCard label="Avg Order Value" value={fmt$(stripeSummary?.average_order_value_cents)} sub="Stripe paid orders" />
-                <StatCard label="Unique Customers" value={fmtNum(stripeSummary?.unique_customers)} sub="Stripe" />
+                <StatCard label="Refunded Orders" value={stripeLoading ? '—' : fmtNum(stripeSummary?.refunded_orders)} sub={stripeLoading ? 'Loading…' : 'Stripe'} color="#ef4444" />
+                <StatCard label="Gross Revenue" value={stripeLoading ? '—' : fmt$(stripeSummary?.gross_revenue_cents)} sub={stripeLoading ? 'Loading…' : 'Stripe'} />
+                <StatCard label="Refunded Amount" value={stripeLoading ? '—' : fmt$(stripeSummary?.refunded_amount_cents)} sub={stripeLoading ? 'Loading…' : 'Stripe'} color="#ef4444" />
+                <StatCard label="Net Revenue" value={stripeLoading ? '—' : fmt$(stripeSummary?.net_revenue_cents)} sub={stripeLoading ? 'Loading…' : 'Stripe'} color="#22c55e" />
+                <StatCard label="Avg Order Value" value={stripeLoading ? '—' : fmt$(stripeSummary?.average_order_value_cents)} sub={stripeLoading ? 'Loading…' : 'Stripe paid orders'} />
+                <StatCard label="Unique Customers" value={stripeLoading ? '—' : fmtNum(stripeSummary?.unique_customers)} sub={stripeLoading ? 'Loading…' : 'Stripe'} />
                 <StatCard label="Completed" value={fmtNum(om.completed)} sub="Order workflow" color="#22c55e" />
                 <StatCard label="In Progress" value={fmtNum(om.inProgress)} sub="Order workflow" color="#8b5cf6" />
                 <StatCard label="Pending" value={fmtNum(om.pending)} sub="Order workflow" color="#f59e0b" />
@@ -519,13 +550,17 @@ const Analytics = ({ orders, onRefreshOrders, refreshingOrders = false }) => {
             {/* ── Charts row ── */}
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '1.25rem', marginBottom: '1.25rem' }}>
                 <SectionCard title={`Stripe paid orders — last ${Math.min(rangeDays || 30, 30)} days`}>
-                    <VBarChart data={dailyData} valueKey="orders" color="var(--accent-primary)" />
+                    {stripeLoading
+                        ? <Empty text="Loading Stripe order history…" />
+                        : <VBarChart data={dailyData} valueKey="orders" color="var(--accent-primary)" />}
                     <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: '4px' }}>
                         <span>{dailyData[0]?.label}</span><span>{dailyData[dailyData.length - 1]?.label}</span>
                     </div>
                 </SectionCard>
                 <SectionCard title={`Stripe net revenue — last ${Math.min(rangeDays || 30, 30)} days`}>
-                    <VBarChart data={dailyData} valueKey="revenue" color="#22c55e" formatVal={fmt$} />
+                    {stripeLoading
+                        ? <Empty text="Loading Stripe revenue…" />
+                        : <VBarChart data={dailyData} valueKey="revenue" color="#22c55e" formatVal={fmt$} />}
                     <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: '4px' }}>
                         <span>{dailyData[0]?.label}</span><span>{dailyData[dailyData.length - 1]?.label}</span>
                     </div>
