@@ -168,7 +168,7 @@ const Emailer = () => {
 
   const finalBody = usingTemplate ? renderedHtml : body;
 
-  const handleGenerateCoupon = async (overrideExpiresAt = null) => {
+  const handleGenerateCoupon = async (overrideExpiresAt = null, noExpiry = false) => {
     setGeneratingCoupon(true);
     setCouponCode(null);
     setCouponError(null);
@@ -179,9 +179,11 @@ const Emailer = () => {
         createdBy: 'professor-dashboard',
         note: 'Generated from Professor Dashboard',
       };
-      const effectiveExpiry = overrideExpiresAt || (expiresAt ? new Date(expiresAt).toISOString() : null);
+      const effectiveExpiry = noExpiry
+        ? null
+        : overrideExpiresAt || (expiresAt ? new Date(expiresAt).toISOString() : null);
       if (effectiveExpiry) payload.expiresAt = effectiveExpiry;
-      if (overrideExpiresAt) setExpiresAt('');
+      if (overrideExpiresAt || noExpiry) setExpiresAt('');
 
       const authHeaders = await getAdminAuthHeaders();
       const res = await fetch(
@@ -209,6 +211,10 @@ const Emailer = () => {
     const thirtyDaysFromNow = new Date();
     thirtyDaysFromNow.setDate(thirtyDaysFromNow.getDate() + 30);
     handleGenerateCoupon(thirtyDaysFromNow.toISOString());
+  };
+
+  const handleGenerateNoExpiryCoupon = () => {
+    handleGenerateCoupon(null, true);
   };
 
   const handleCopy = () => {
@@ -524,6 +530,22 @@ const Emailer = () => {
             title="Generate a coupon that expires exactly 30 days from now"
           >
             {generatingCoupon ? 'Generating...' : '📅 Generate 30-Day Coupon'}
+          </button>
+
+          <button
+            onClick={handleGenerateNoExpiryCoupon}
+            disabled={generatingCoupon}
+            style={{
+              padding: '10px 24px',
+              background: generatingCoupon ? 'var(--bg-hover)' : '#8b5cf6',
+              color: generatingCoupon ? 'var(--text-muted)' : '#fff',
+              border: 'none', borderRadius: '8px',
+              cursor: generatingCoupon ? 'not-allowed' : 'pointer',
+              fontWeight: '600', fontSize: '0.9rem',
+            }}
+            title="Generate a one-time-use coupon that never expires"
+          >
+            {generatingCoupon ? 'Generating...' : '♾ Generate One-Time Coupon (No Expiry)'}
           </button>
 
           {couponCode && (
