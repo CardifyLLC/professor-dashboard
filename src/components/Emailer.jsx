@@ -340,6 +340,13 @@ const Emailer = () => {
         .sort((a, b) => a.email.localeCompare(b.email))
         .map(person => ({ Email: person.email }));
 
+      setEmails(currentEmails => [
+        ...new Set([
+          ...currentEmails.map(normalizeEmail).filter(Boolean),
+          ...rows.map(row => row.Email),
+        ]),
+      ]);
+
       const worksheet = XLSX.utils.json_to_sheet(rows);
       const csv = XLSX.utils.sheet_to_csv(worksheet);
       const blob = new Blob([`\uFEFF${csv}`], { type: 'text/csv;charset=utf-8' });
@@ -461,9 +468,9 @@ const Emailer = () => {
                 cursor: exportingEmails ? 'wait' : 'pointer',
                 fontSize: '0.875rem', fontWeight: '600', whiteSpace: 'nowrap',
               }}
-              title="Download unique emails from profiles, orders, guest orders, and active subscribers"
+              title="Load all unique emails into Recipients and download the same list as CSV"
             >
-              {exportingEmails ? 'Preparing All Emails…' : '⬇ Download All Emails'}
+              {exportingEmails ? 'Loading All Emails…' : '⬇ Load & Download All Emails'}
             </button>
           </div>
           <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '6px' }}>
