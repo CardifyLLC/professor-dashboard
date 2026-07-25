@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import * as XLSX from 'xlsx';
-import { getAdminAuthHeaders } from '../services/supabaseClient';
+import { getAdminAuthHeaders, supabase } from '../services/supabaseClient';
 
 /* =========================================================================
    Email Templates — built for physical product (TCG / card printing) blasts
@@ -135,6 +135,8 @@ const Emailer = () => {
   const [body, setBody] = useState('');
   const [sending, setSending] = useState(false);
   const [result, setResult] = useState(null);
+  const [exportingEmails, setExportingEmails] = useState(false);
+  const [exportError, setExportError] = useState('');
 
   // Template state
   const [selectedTemplateId, setSelectedTemplateId] = useState('blank');
@@ -256,6 +258,106 @@ const Emailer = () => {
     e.target.value = '';
   };
 
+  const fetchAllRows = async (table, columns, configure = query => query) => {
+    const pageSize = 1000;
+    const rows = [];
+    let from = 0;
+    while (true) {
+      const query = configure(supabase.from(table).select(columns).range(from, from + pageSize - 1));
+      const { data, error } = await query;
+      if (error) throw error;
+      rows.push(...(data || []));
+      if (!data || data.length < pageSize) break;
+      from += pageSize;
+    }
+    return rows;
+  };
+
+  const handleDownloadAllEmails = async () => {
+    setExportingEmails(true);
+    setExportError('');
+    try {
+      const [profiles, orders, subscribers] = await Promise.all([
+        fetchAllRows('profiles', 'id,email,full_name,created_at'),
+        fetchAllRows('orders', 'id,user_id,customer_email,customer_name,created_at'),
+        fetchAllRows('marketing_subscribers', 'email,full_name,status,created_at', query => query.eq('status', 'subscribed')),
+      ]);
+
+      let archivedOrders = [];
+      try {
+        archivedOrders = await fetchAllRows('deleted_orders_archive', 'order_id,customer_email,order_created_at');
+      } catch {
+        archivedOrders = [];
+      }
+
+      const people = new Map();
+      const normalizeEmail = value => String(value || '').trim().toLowerCase();
+      const ensurePerson = (email, name = '') => {
+        const normalized = normalizeEmail(email);
+        if (!normalized || !normalized.includes('@')) return null;
+        if (!people.has(normalized)) {
+          people.set(normalized, {
+            email: normalized, name: String(name || '').trim(), sources: new Set(),
+            hasProfile: false, hasOrder: false, hasGuestOrder: false, isSubscriber: false,
+          });
+        }
+        const person = people.get(normalized);
+        if (!person.name && name) person.name = String(name).trim();
+        return person;
+      };
+
+      const profileEmails = new Map();
+      profiles.forEach(profile => {
+        const person = ensurePerson(profile.email, profile.full_name);
+        if (!person) return;
+        person.hasProfile = true;
+        profileEmails.set(normalizeEmail(profile.email), person);
+      });
+
+      [...orders, ...archivedOrders].forEach(order => {
+        const email = normalizeEmail(order.customer_email);
+        const person = ensurePerson(email, order.customer_name);
+        if (!person) return;
+        person.hasOrder = true;
+        if (!order.user_id && !profileEmails.has(email)) person.hasGuestOrder = true;
+      });
+
+      subscribers.forEach(subscriber => {
+        const person = ensurePerson(subscriber.email, subscriber.full_name);
+        if (!person) return;
+        person.isSubscriber = true;
+      });
+
+      people.forEach(person => {
+        if (person.hasProfile && person.hasOrder) person.sources.add('Profile + Ordered');
+        if (person.hasProfile && !person.hasOrder) person.sources.add('Profile + No Order');
+        if (person.hasGuestOrder) person.sources.add('Guest Order');
+        if (person.isSubscriber) person.sources.add('Subscriber');
+      });
+
+      const rows = [...people.values()].filter(person => person.sources.size > 0)
+        .sort((a, b) => a.email.localeCompare(b.email)).map(person => ({
+          Email: person.email,
+          Name: person.name,
+          Sources: [...person.sources].join(', '),
+          'Has Profile': person.hasProfile ? 'Yes' : 'No',
+          'Has Ordered': person.hasOrder ? 'Yes' : 'No',
+          'Guest Order': person.hasGuestOrder ? 'Yes' : 'No',
+          'Active Subscriber': person.isSubscriber ? 'Yes' : 'No',
+        }));
+
+      const worksheet = XLSX.utils.json_to_sheet(rows);
+      worksheet['!cols'] = [{ wch: 38 }, { wch: 26 }, { wch: 48 }, { wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 18 }];
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, worksheet, 'All Emails');
+      XLSX.writeFile(workbook, `all-customer-emails-${new Date().toISOString().slice(0, 10)}.xlsx`);
+    } catch (error) {
+      setExportError(error.message || 'Unable to download all emails.');
+    } finally {
+      setExportingEmails(false);
+    }
+  };
+
   const handleSend = async () => {
     const toSend = finalBody;
     if (!emails.length || !subject.trim() || !toSend.trim()) return;
@@ -276,7 +378,10 @@ const Emailer = () => {
       );
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to send');
-      setResult({ type: 'success', message: `Sent to ${data.sent} recipient${data.sent !== 1 ? 's' : ''}.${data.failed > 0 ? ` ${data.failed} failed${data.firstError ? `: ${data.firstError}` : '.'}` : ''}` });
+      setResult({
+        type: 'success',
+        message: `Sent to ${data.sent} recipient${data.sent !== 1 ? 's' : ''} as ${data.format === 'html' ? 'HTML' : 'plain text'}.${data.failed > 0 ? ` ${data.failed} failed${data.firstError ? `: ${data.firstError}` : '.'}` : ''}`,
+      });
       setEmails([]);
       setSubject('');
       setBody('');
@@ -343,10 +448,31 @@ const Emailer = () => {
               Upload CSV / Excel
               <input type="file" accept=".csv,.xlsx,.xls,.txt" onChange={handleFileUpload} style={{ display: 'none' }} />
             </label>
+
+            <button
+              type="button"
+              onClick={handleDownloadAllEmails}
+              disabled={exportingEmails}
+              style={{
+                padding: '8px 18px',
+                background: exportingEmails ? 'var(--bg-hover)' : '#10b981',
+                color: exportingEmails ? 'var(--text-muted)' : '#fff',
+                border: 'none', borderRadius: '8px',
+                cursor: exportingEmails ? 'wait' : 'pointer',
+                fontSize: '0.875rem', fontWeight: '600', whiteSpace: 'nowrap',
+              }}
+              title="Download unique emails from profiles, orders, guest orders, and active subscribers"
+            >
+              {exportingEmails ? 'Preparing All Emails…' : '⬇ Download All Emails'}
+            </button>
           </div>
           <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '6px' }}>
             Supports .csv, .xlsx, .xls, .txt — emails extracted automatically
           </p>
+
+          {exportError && (
+            <p style={{ fontSize: '0.8rem', color: '#ef4444', marginTop: '8px' }}>{exportError}</p>
+          )}
 
           {emails.length > 0 && (
             <div style={{ marginTop: '16px', display: 'flex', flexDirection: 'column', gap: '6px', maxHeight: '260px', overflowY: 'auto' }}>
