@@ -335,16 +335,10 @@ const Emailer = () => {
         if (person.isSubscriber) person.sources.add('Subscriber');
       });
 
-      const rows = [...people.values()].filter(person => person.sources.size > 0)
-        .sort((a, b) => a.email.localeCompare(b.email)).map(person => ({
-          Email: person.email,
-          Name: person.name,
-          Sources: [...person.sources].join(', '),
-          'Has Profile': person.hasProfile ? 'Yes' : 'No',
-          'Has Ordered': person.hasOrder ? 'Yes' : 'No',
-          'Guest Order': person.hasGuestOrder ? 'Yes' : 'No',
-          'Active Subscriber': person.isSubscriber ? 'Yes' : 'No',
-        }));
+      const rows = [...people.values()]
+        .filter(person => person.sources.size > 0)
+        .sort((a, b) => a.email.localeCompare(b.email))
+        .map(person => ({ Email: person.email }));
 
       const worksheet = XLSX.utils.json_to_sheet(rows);
       const csv = XLSX.utils.sheet_to_csv(worksheet);
