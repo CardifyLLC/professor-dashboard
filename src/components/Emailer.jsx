@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import * as XLSX from 'xlsx';
-import { getAdminAuthHeaders, supabase } from '../services/supabaseClient';
+import { getAdminAuthHeaders } from '../services/supabaseClient';
 
 /* =========================================================================
    Email Templates — built for physical product (TCG / card printing) blasts
@@ -258,92 +258,28 @@ const Emailer = () => {
     e.target.value = '';
   };
 
-  const fetchAllRows = async (table, columns, configure = query => query) => {
-    const pageSize = 1000;
-    const rows = [];
-    let from = 0;
-    while (true) {
-      const query = configure(supabase.from(table).select(columns).range(from, from + pageSize - 1));
-      const { data, error } = await query;
-      if (error) throw error;
-      rows.push(...(data || []));
-      if (!data || data.length < pageSize) break;
-      from += pageSize;
-    }
-    return rows;
-  };
-
   const handleDownloadAllEmails = async () => {
     setExportingEmails(true);
     setExportError('');
     try {
-      const [profiles, orders, subscribers] = await Promise.all([
-        fetchAllRows('profiles', 'id,email,full_name,created_at'),
-        fetchAllRows('orders', 'id,user_id,customer_email,customer_name,created_at'),
-        fetchAllRows('marketing_subscribers', 'email,full_name,status,created_at', query => query.eq('status', 'subscribed')),
-      ]);
-
-      let archivedOrders = [];
-      try {
-        archivedOrders = await fetchAllRows('deleted_orders_archive', 'order_id,customer_email,order_created_at');
-      } catch {
-        archivedOrders = [];
-      }
-
-      const people = new Map();
       const normalizeEmail = value => String(value || '').trim().toLowerCase();
-      const ensurePerson = (email, name = '') => {
-        const normalized = normalizeEmail(email);
-        if (!normalized || !normalized.includes('@')) return null;
-        if (!people.has(normalized)) {
-          people.set(normalized, {
-            email: normalized, name: String(name || '').trim(), sources: new Set(),
-            hasProfile: false, hasOrder: false, hasGuestOrder: false, isSubscriber: false,
-          });
-        }
-        const person = people.get(normalized);
-        if (!person.name && name) person.name = String(name).trim();
-        return person;
-      };
+      const authHeaders = await getAdminAuthHeaders();
+      const response = await fetch(
+        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/export-all-emails`,
+        { headers: authHeaders }
+      );
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Unable to export all emails.');
 
-      const profileEmails = new Map();
-      profiles.forEach(profile => {
-        const person = ensurePerson(profile.email, profile.full_name);
-        if (!person) return;
-        person.hasProfile = true;
-        profileEmails.set(normalizeEmail(profile.email), person);
-      });
-
-      [...orders, ...archivedOrders].forEach(order => {
-        const email = normalizeEmail(order.customer_email);
-        const person = ensurePerson(email, order.customer_name);
-        if (!person) return;
-        person.hasOrder = true;
-        if (!order.user_id && !profileEmails.has(email)) person.hasGuestOrder = true;
-      });
-
-      subscribers.forEach(subscriber => {
-        const person = ensurePerson(subscriber.email, subscriber.full_name);
-        if (!person) return;
-        person.isSubscriber = true;
-      });
-
-      people.forEach(person => {
-        if (person.hasProfile && person.hasOrder) person.sources.add('Profile + Ordered');
-        if (person.hasProfile && !person.hasOrder) person.sources.add('Profile + No Order');
-        if (person.hasGuestOrder) person.sources.add('Guest Order');
-        if (person.isSubscriber) person.sources.add('Subscriber');
-      });
-
-      const rows = [...people.values()]
-        .filter(person => person.sources.size > 0)
-        .sort((a, b) => a.email.localeCompare(b.email))
-        .map(person => ({ Email: person.email }));
+      const exportedEmails = [...new Set(
+        (data.emails || []).map(normalizeEmail).filter(email => email.includes('@'))
+      )].sort((a, b) => a.localeCompare(b));
+      const rows = exportedEmails.map(email => ({ Email: email }));
 
       setEmails(currentEmails => [
         ...new Set([
           ...currentEmails.map(normalizeEmail).filter(Boolean),
-          ...rows.map(row => row.Email),
+          ...exportedEmails,
         ]),
       ]);
 
