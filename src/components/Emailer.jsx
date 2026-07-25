@@ -347,10 +347,16 @@ const Emailer = () => {
         }));
 
       const worksheet = XLSX.utils.json_to_sheet(rows);
-      worksheet['!cols'] = [{ wch: 38 }, { wch: 26 }, { wch: 48 }, { wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 18 }];
-      const workbook = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(workbook, worksheet, 'All Emails');
-      XLSX.writeFile(workbook, `all-customer-emails-${new Date().toISOString().slice(0, 10)}.xlsx`);
+      const csv = XLSX.utils.sheet_to_csv(worksheet);
+      const blob = new Blob([`\uFEFF${csv}`], { type: 'text/csv;charset=utf-8' });
+      const downloadUrl = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = downloadUrl;
+      link.download = `all-customer-emails-${new Date().toISOString().slice(0, 10)}.csv`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(downloadUrl);
     } catch (error) {
       setExportError(error.message || 'Unable to download all emails.');
     } finally {
