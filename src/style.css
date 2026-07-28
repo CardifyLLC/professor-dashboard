@@ -77,6 +77,33 @@ button {
   display: flex;
   flex-direction: column;
   padding: 1.5rem;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.sidebar > nav {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-right: 0.35rem;
+  scrollbar-gutter: stable;
+}
+
+.sidebar-apps {
+  flex-shrink: 0;
+  margin: 0.75rem -0.25rem -0.25rem;
+  padding: 0.9rem 0.25rem 0;
+  border-top: 1px solid var(--border-color);
+  background: var(--bg-secondary);
+}
+
+.sidebar-apps .nav-section-title {
+  margin-top: 0 !important;
+}
+
+.sidebar-apps .nav-item {
+  margin-bottom: 0;
 }
 
 .main-content {
@@ -95,6 +122,7 @@ button {
   display: flex;
   align-items: center;
   gap: 0.5rem;
+  flex-shrink: 0;
 }
 
 .logo span {
