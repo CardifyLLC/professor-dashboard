@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Check, Clock, Copy, ExternalLink, Gift, RefreshCw, Search, Users, WalletCards, X } from 'lucide-react';
+import { Check, Clock, Copy, Download, ExternalLink, Gift, QrCode, RefreshCw, Search, Users, WalletCards, X } from 'lucide-react';
+import QRCode from 'qrcode';
 import { getAdminAuthHeaders, supabaseAdmin } from '../services/supabaseClient';
 import './AffiliateRequests.css';
 
@@ -46,6 +47,10 @@ export default function AffiliateRequests() {
   const [granting, setGranting] = useState(false);
   const [grantResult, setGrantResult] = useState(null);
   const [walletBalances, setWalletBalances] = useState({});
+  const [qrPreview, setQrPreview] = useState(null);
+  const [qrGenerating, setQrGenerating] = useState('');
+  const [backfillingQr, setBackfillingQr] = useState(false);
+  const [backfillResult, setBackfillResult] = useState('');
 
   const loadRequests = useCallback(async () => {
     setLoading(true);
@@ -105,6 +110,73 @@ export default function AffiliateRequests() {
     message: decisionCopy(request, action),
     error: '',
   });
+
+  const openQrCode = async (affiliate) => {
+    if (!affiliate?.affiliate_link) return;
+    setQrGenerating(affiliate.id);
+    setError('');
+    try {
+      const dataUrl = await QRCode.toDataURL(affiliate.affiliate_link, {
+        width: 900,
+        margin: 3,
+        errorCorrectionLevel: 'H',
+        color: { dark: '#07111f', light: '#ffffff' },
+      });
+      setQrPreview({
+        dataUrl,
+        link: affiliate.affiliate_link,
+        code: affiliate.affiliate_code || 'affiliate',
+        name: affiliate.name || affiliate.email || 'Affiliate',
+      });
+    } catch (qrError) {
+      setError(`Could not generate QR code: ${qrError.message}`);
+    } finally {
+      setQrGenerating('');
+    }
+  };
+
+  const downloadQrCode = () => {
+    if (!qrPreview) return;
+    const safeCode = String(qrPreview.code).replace(/[^a-z0-9_-]/gi, '-').toLowerCase();
+    const link = document.createElement('a');
+    link.href = qrPreview.dataUrl;
+    link.download = `affiliate-${safeCode}-qr.png`;
+    link.click();
+  };
+
+  const generateMissingQrCodes = async () => {
+    if (backfillingQr) return;
+    const missingCount = approvedMembers.filter((member) => member.affiliate_link && !member.affiliate_qr_code_url).length;
+    if (missingCount === 0) {
+      setBackfillResult('All approved affiliates with links already have stored QR assets.');
+      return;
+    }
+    if (!window.confirm(`Generate and email QR assets for ${missingCount} approved affiliate${missingCount === 1 ? '' : 's'}?`)) return;
+
+    setBackfillingQr(true);
+    setBackfillResult('');
+    setError('');
+    try {
+      const authHeaders = await getAdminAuthHeaders();
+      const response = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/affiliate-request-action`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...authHeaders },
+        body: JSON.stringify({ action: 'backfill_qr' }),
+      });
+      const result = await readFunctionResponse(response);
+      if (!response.ok) throw new Error(result.error || 'Could not generate missing QR assets.');
+      setBackfillResult(
+        result.processed === 0
+          ? 'No missing QR assets were found.'
+          : `Generated and emailed ${result.processed} affiliate QR set${result.processed === 1 ? '' : 's'}${result.failed ? `; ${result.failed} failed.` : '.'}`,
+      );
+      await loadRequests();
+    } catch (backfillError) {
+      setError(`QR backfill failed: ${backfillError.message}`);
+    } finally {
+      setBackfillingQr(false);
+    }
+  };
 
   const submitPrintGrant = async (event) => {
     event.preventDefault();
@@ -203,8 +275,15 @@ export default function AffiliateRequests() {
             <h2><WalletCards size={19} /> Approved members</h2>
             <p>Live PRINTS balances for every approved affiliate.</p>
           </div>
-          <span>{approvedMembers.length} member{approvedMembers.length === 1 ? '' : 's'}</span>
+          <div className="approved-members-controls">
+            <button type="button" onClick={generateMissingQrCodes} disabled={backfillingQr}>
+              <QrCode size={15} />
+              {backfillingQr ? 'Generating...' : 'Generate missing QR codes'}
+            </button>
+            <span>{approvedMembers.length} member{approvedMembers.length === 1 ? '' : 's'}</span>
+          </div>
         </div>
+        {backfillResult && <div className="affiliate-backfill-result">{backfillResult}</div>}
         {approvedMembers.length === 0 ? (
           <div className="approved-members-empty">No approved affiliates yet.</div>
         ) : (
@@ -221,9 +300,16 @@ export default function AffiliateRequests() {
                     <strong>{balance.toLocaleString()}</strong><span>PRINTS</span>
                   </div>
                   {member.affiliate_link || member.affiliate_code ? (
-                    <button type="button" onClick={() => navigator.clipboard.writeText(member.affiliate_link || member.affiliate_code)}>
-                      <Copy size={13} /> {member.affiliate_link ? 'Link' : member.affiliate_code}
-                    </button>
+                    <div className="approved-member-link-actions">
+                      <button type="button" onClick={() => navigator.clipboard.writeText(member.affiliate_link || member.affiliate_code)}>
+                        <Copy size={13} /> {member.affiliate_link ? 'Link' : member.affiliate_code}
+                      </button>
+                      {member.affiliate_link && (
+                        <button type="button" onClick={() => openQrCode(member)} disabled={qrGenerating === member.id}>
+                          <QrCode size={14} /> {qrGenerating === member.id ? 'Generating...' : 'QR'}
+                        </button>
+                      )}
+                    </div>
                   ) : <span className="approved-member-no-link">No code/link</span>}
                   <button
                     type="button"
@@ -353,13 +439,21 @@ export default function AffiliateRequests() {
                           <span>{request.affiliate_link ? 'Affiliate link' : 'Affiliate code'}</span>
                           <strong>{request.affiliate_link || request.affiliate_code}</strong>
                         </div>
-                        <button
-                          type="button"
-                          onClick={() => navigator.clipboard.writeText(request.affiliate_link || request.affiliate_code)}
-                        >
-                          {request.affiliate_link ? <ExternalLink size={15} /> : <Copy size={15} />}
-                          {request.affiliate_link ? 'Copy link' : 'Copy code'}
-                        </button>
+                        <div className="affiliate-link-actions">
+                          <button
+                            type="button"
+                            onClick={() => navigator.clipboard.writeText(request.affiliate_link || request.affiliate_code)}
+                          >
+                            {request.affiliate_link ? <ExternalLink size={15} /> : <Copy size={15} />}
+                            {request.affiliate_link ? 'Copy link' : 'Copy code'}
+                          </button>
+                          {request.affiliate_link && (
+                            <button type="button" onClick={() => openQrCode(request)} disabled={qrGenerating === request.id}>
+                              <QrCode size={15} />
+                              {qrGenerating === request.id ? 'Generating...' : 'QR code'}
+                            </button>
+                          )}
+                        </div>
                       </div>
                     )}
                   </>
@@ -367,6 +461,34 @@ export default function AffiliateRequests() {
               </article>
             );
           })}
+        </div>
+      )}
+      {qrPreview && (
+        <div
+          className="affiliate-modal-backdrop"
+          role="presentation"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setQrPreview(null);
+          }}
+        >
+          <div className="affiliate-modal affiliate-qr-modal" role="dialog" aria-modal="true" aria-label="Affiliate QR code">
+            <div className="affiliate-modal-title">
+              <div>
+                <span>Affiliate QR code</span>
+                <p>{qrPreview.name}</p>
+              </div>
+              <button type="button" aria-label="Close" onClick={() => setQrPreview(null)}><X size={20} /></button>
+            </div>
+            <div className="affiliate-qr-image">
+              <img src={qrPreview.dataUrl} alt={`QR code for ${qrPreview.code}`} />
+            </div>
+            <div className="affiliate-qr-link">{qrPreview.link}</div>
+            <p className="affiliate-qr-note">Scanning this QR code opens the exact affiliate link, so orders keep the same affiliate attribution.</p>
+            <div className="affiliate-modal-actions">
+              <button type="button" className="cancel" onClick={() => setQrPreview(null)}>Close</button>
+              <button type="button" className="approve" onClick={downloadQrCode}><Download size={16} /> Download PNG</button>
+            </div>
+          </div>
         </div>
       )}
       {dialog && (
