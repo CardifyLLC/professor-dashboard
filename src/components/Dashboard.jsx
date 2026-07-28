@@ -256,6 +256,9 @@ const Dashboard = () => {
                                 <span>🗑️</span> Deleted Orders
                             </div>
 
+                        </nav>
+
+                        <div className="sidebar-apps">
                             <div className="nav-section-title" style={{
                                 color: 'var(--text-muted)',
                                 fontSize: '0.75rem',
@@ -274,7 +277,7 @@ const Dashboard = () => {
                             >
                                 <span>🎴</span> Batcher PRO
                             </div>
-                        </nav>
+                        </div>
                     </aside>
 
                     {mobileMenuOpen && (
