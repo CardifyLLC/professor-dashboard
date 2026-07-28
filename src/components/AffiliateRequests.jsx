@@ -144,14 +144,14 @@ export default function AffiliateRequests() {
     link.click();
   };
 
-  const generateMissingQrCodes = async () => {
+  const generateAllQrCodes = async () => {
     if (backfillingQr) return;
-    const missingCount = approvedMembers.filter((member) => member.affiliate_link && !member.affiliate_qr_code_url).length;
-    if (missingCount === 0) {
-      setBackfillResult('All approved affiliates with links already have stored QR assets.');
+    const eligibleCount = approvedMembers.filter((member) => member.affiliate_code).length;
+    if (eligibleCount === 0) {
+      setBackfillResult('No approved affiliates with codes were found.');
       return;
     }
-    if (!window.confirm(`Generate and email QR assets for ${missingCount} approved affiliate${missingCount === 1 ? '' : 's'}?`)) return;
+    if (!window.confirm(`Generate and email fresh QR assets for all ${eligibleCount} approved affiliate${eligibleCount === 1 ? '' : 's'}? Existing QR assets will be replaced.`)) return;
 
     setBackfillingQr(true);
     setBackfillResult('');
@@ -161,13 +161,13 @@ export default function AffiliateRequests() {
       const response = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/affiliate-request-action`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...authHeaders },
-        body: JSON.stringify({ action: 'backfill_qr' }),
+        body: JSON.stringify({ action: 'generate_all_qr' }),
       });
       const result = await readFunctionResponse(response);
-      if (!response.ok) throw new Error(result.error || 'Could not generate missing QR assets.');
+      if (!response.ok) throw new Error(result.error || 'Could not generate QR assets for all affiliates.');
       setBackfillResult(
         result.processed === 0
-          ? 'No missing QR assets were found.'
+          ? 'No approved affiliates with codes were found.'
           : `Generated and emailed ${result.processed} affiliate QR set${result.processed === 1 ? '' : 's'}${result.failed ? `; ${result.failed} failed.` : '.'}`,
       );
       await loadRequests();
@@ -276,9 +276,9 @@ export default function AffiliateRequests() {
             <p>Live PRINTS balances for every approved affiliate.</p>
           </div>
           <div className="approved-members-controls">
-            <button type="button" onClick={generateMissingQrCodes} disabled={backfillingQr}>
+            <button type="button" onClick={generateAllQrCodes} disabled={backfillingQr}>
               <QrCode size={15} />
-              {backfillingQr ? 'Generating...' : 'Generate missing QR codes'}
+              {backfillingQr ? 'Generating for all...' : 'Generate QR for all'}
             </button>
             <span>{approvedMembers.length} member{approvedMembers.length === 1 ? '' : 's'}</span>
           </div>
