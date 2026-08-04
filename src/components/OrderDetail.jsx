@@ -144,6 +144,13 @@ const OrderDetail = ({ order, onClose, onOrderUpdated }) => {
         ).join(' ');
     };
 
+    const formatPixelDimensions = (dimensions) => {
+        const width = Number(dimensions?.width);
+        const height = Number(dimensions?.height);
+        if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return null;
+        return `${Math.round(width).toLocaleString()} × ${Math.round(height).toLocaleString()} px`;
+    };
+
     const startEditCard = (index, data) => {
         setEditingCardIndex(index);
         setEditValues({
@@ -834,6 +841,18 @@ const OrderDetail = ({ order, onClose, onOrderUpdated }) => {
                                                                 <div className="info-row" style={{ padding: '0.25rem 0', borderBottom: 'none' }}>
                                                                     <span className="info-label">Finish:</span>
                                                                     <span>{formatFinish(itemData.finish)}</span>
+                                                                </div>
+                                                            )}
+                                                            {formatPixelDimensions(itemData.frontDimensions) && (
+                                                                <div className="info-row" style={{ padding: '0.25rem 0', borderBottom: 'none' }}>
+                                                                    <span className="info-label">Front upload:</span>
+                                                                    <span title="Original uploaded image size before bleed or print processing">{formatPixelDimensions(itemData.frontDimensions)}</span>
+                                                                </div>
+                                                            )}
+                                                            {formatPixelDimensions(itemData.backDimensions) && (
+                                                                <div className="info-row" style={{ padding: '0.25rem 0', borderBottom: 'none' }}>
+                                                                    <span className="info-label">Back upload:</span>
+                                                                    <span title="Original uploaded image size before bleed or print processing">{formatPixelDimensions(itemData.backDimensions)}</span>
                                                                 </div>
                                                             )}
                                                             {itemData.trimMm !== undefined && itemData.trimMm !== null && (
