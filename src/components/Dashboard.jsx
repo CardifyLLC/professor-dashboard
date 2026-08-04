@@ -14,6 +14,7 @@ import DeletedOrdersStats from './DeletedOrdersStats';
 import OrdersMap from './OrdersMap';
 import AffiliateRequests from './AffiliateRequests';
 import AffiliateOrders from './AffiliateOrders';
+import SharedDeckRequests from './SharedDeckRequests';
 
 const Dashboard = () => {
     const [orders, setOrders] = useState([]);
@@ -238,6 +239,12 @@ const Dashboard = () => {
                                 <span>🔗</span> Affiliate Orders
                             </div>
                             <div
+                                className={`nav-item ${activeView === 'shared-deck-requests' ? 'active' : ''}`}
+                                onClick={() => { setActiveView('shared-deck-requests'); setMobileMenuOpen(false); }}
+                            >
+                                <span>🛡️</span> Share Link Reviews
+                            </div>
+                            <div
                                 className={`nav-item ${activeView === 'analytics' ? 'active' : ''}`}
                                 onClick={() => { setActiveView('analytics'); setMobileMenuOpen(false); }}
                             >
@@ -457,6 +464,10 @@ const Dashboard = () => {
 
                                     {activeView === 'affiliate-orders' && (
                                         <AffiliateOrders onSelectOrder={handleSelectOrder} />
+                                    )}
+
+                                    {activeView === 'shared-deck-requests' && (
+                                        <SharedDeckRequests />
                                     )}
 
                                     {activeView === 'analytics' && (
