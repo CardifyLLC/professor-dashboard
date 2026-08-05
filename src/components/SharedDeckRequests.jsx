@@ -56,7 +56,7 @@ export default function SharedDeckRequests() {
     setReasonError('');
     setSaving(true); setError('');
     const { data: sessionData } = await supabase.auth.getSession();
-    const storefront = (import.meta.env.VITE_STOREFRONT_URL || 'https://testing123-prof.vercel.app').replace(/\/$/, '');
+    const storefront = (import.meta.env.VITE_STOREFRONT_URL || 'https://www.tcgplaytest.com').replace(/\/$/, '');
     try {
       const response = await fetch(`${storefront}/api/admin/shared-purchase-requests`, { method: 'PATCH', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${sessionData?.session?.access_token || ''}` }, body: JSON.stringify({ id: selected.id, status, rejectionMessage }) });
       const data = await response.json();
