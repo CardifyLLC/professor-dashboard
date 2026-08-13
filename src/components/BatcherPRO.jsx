@@ -46,7 +46,7 @@ const INITIAL_CONFIG = {
   // Layout Defaults (Locked)
   marginTop: 15.5,
   marginLeft: 9.7,
-  gapHorizontal: 2.7,
+  gapHorizontal: 2.6,
   gapVertical: 6.4,
 
   // Card Size (Locked)
@@ -915,16 +915,25 @@ const CardBatcherPro = ({ showSidebar = true, onBackToDashboard }) => {
           const cardData = typeof order.card_data === 'string'
             ? JSON.parse(order.card_data)
             : (order.card_data || []);
+          const isProModeOrder = order.metadata?.proMode === true || order.metadata?.pro_mode === true;
 
           if (cardData.length > 0) {
             // Use structured card_data which has explicit frontUrl/backUrl — immune to positional drift
             cardData.forEach((card, cardDataIndex) => {
-              if (!card.frontUrl) return;
+              const frontUrl = isProModeOrder
+                ? (card.originalFrontUrl || card.originalFront || card.frontUrl)
+                : card.frontUrl;
+              const backUrl = isProModeOrder
+                ? (card.originalBackUrl || card.originalBack || card.backUrl)
+                : card.backUrl;
+              if (!frontUrl) return;
               newCards.push({
                 id: Math.random().toString(36).substr(2, 9),
-                url: getCachedFrontUrl(getOrderImageUrl(card.frontUrl)),
+                url: isProModeOrder
+                  ? getOrderImageUrl(frontUrl)
+                  : getCachedFrontUrl(getOrderImageUrl(frontUrl)),
                 file: null,
-                customBack: card.backUrl ? getOrderImageUrl(card.backUrl) : null,
+                customBack: backUrl ? getOrderImageUrl(backUrl) : null,
                 spotMask: card.silverMask ? getOrderImageUrl(card.silverMask) : undefined,
                 customerName: customerName,
                 orderId: order.id,
