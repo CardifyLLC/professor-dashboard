@@ -2,6 +2,18 @@ import { supabase, supabaseAdmin, getAdminAuthHeaders } from './supabaseClient';
 
 const ordersClient = supabaseAdmin;
 
+export const awardCashPurchaseReward = async (orderId) => {
+    const headers = await getAdminAuthHeaders();
+    const response = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/award-cash-reward`, {
+        method: 'POST',
+        headers: { ...headers, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ orderId }),
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(result.error || `Cash reward failed with HTTP ${response.status}.`);
+    return result;
+};
+
 export const ORDER_STATUSES = ['pending', 'paid', 'processing', 'shipped', 'completed', 'cancelled'];
 
 /**
@@ -106,6 +118,72 @@ export const fetchPaidOrdersForBatcher = async () => {
         throw error;
     }
     return (data || []).filter(order => order.metadata?.productType !== 'cardstock');
+};
+
+/** Returns the current automatic PDF state for one order. */
+export const fetchOrderPdfGeneration = async (orderId) => {
+    const { data, error } = await ordersClient
+        .from('order_pdf_generations')
+        .select('order_id, status, storage_path, storage_paths, error_message, completed_at, total_cards, processed_cards, total_parts, completed_parts')
+        .eq('order_id', orderId)
+        .maybeSingle();
+    if (error) throw error;
+    return data;
+};
+
+/** Creates a short-lived private download URL for one completed order PDF. */
+export const createOrderPdfDownloadUrl = async (storagePath) => {
+    const { data, error } = await supabase.storage
+        .from('order-pdfs')
+        .createSignedUrl(storagePath, 10 * 60, { download: true });
+    if (error) throw error;
+    if (!data?.signedUrl) throw new Error('Could not create the PDF download link.');
+    return data.signedUrl;
+};
+
+/** Returns automatic PDF states for the visible order rows in one request. */
+export const fetchOrderPdfGenerations = async (orderIds) => {
+    if (!orderIds.length) return [];
+    const { data, error } = await ordersClient
+        .from('order_pdf_generations')
+        .select('order_id, status, error_message, total_cards, processed_cards, total_parts, completed_parts')
+        .in('order_id', orderIds);
+    if (error) throw error;
+    return data || [];
+};
+
+/** Creates short-lived private URLs for all parts of a generated order PDF. */
+export const createOrderPdfDownloadUrls = async (storagePaths) => {
+    const { data, error } = await supabase.storage
+        .from('order-pdfs')
+        .createSignedUrls(storagePaths, 10 * 60, { download: true });
+    if (error) throw error;
+    const urls = (data || []).map(item => item.signedUrl).filter(Boolean);
+    if (urls.length !== storagePaths.length) throw new Error('Could not create all PDF download links.');
+    return urls;
+};
+
+// Backward-compatible exports for deployments that still contain the previous
+// Dashboard bundle. The current Dashboard no longer renders the bulk button.
+export const fetchNewOrderPdfs = async () => {
+    const { data, error } = await ordersClient
+        .from('order_pdf_generations')
+        .select('order_id, storage_path, completed_at')
+        .eq('status', 'completed')
+        .is('downloaded_at', null)
+        .not('storage_path', 'is', null)
+        .order('completed_at', { ascending: true });
+    if (error) throw error;
+    return data || [];
+};
+
+export const markOrderPdfsDownloaded = async (orderIds) => {
+    if (!orderIds.length) return;
+    const { error } = await ordersClient
+        .from('order_pdf_generations')
+        .update({ downloaded_at: new Date().toISOString(), updated_at: new Date().toISOString() })
+        .in('order_id', orderIds);
+    if (error) throw error;
 };
 
 /**
