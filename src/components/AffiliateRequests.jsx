@@ -46,6 +46,10 @@ export default function AffiliateRequests() {
   const [grantForm, setGrantForm] = useState({ recipient: '', amount: '', note: '' });
   const [granting, setGranting] = useState(false);
   const [grantResult, setGrantResult] = useState(null);
+  const [bulkGrant, setBulkGrant] = useState({ amount: '', note: '' });
+  const [bulkGrantStatus, setBulkGrantStatus] = useState({ loading: false, error: '', success: '' });
+  const [newUserGrant, setNewUserGrant] = useState({ amount: '', note: '' });
+  const [newUserGrantStatus, setNewUserGrantStatus] = useState({ loading: false, error: '', success: '' });
   const [walletBalances, setWalletBalances] = useState({});
   const [qrPreview, setQrPreview] = useState(null);
   const [qrGenerating, setQrGenerating] = useState('');
@@ -227,6 +231,74 @@ export default function AffiliateRequests() {
     }
   };
 
+  const grantPrintsToAll = async (event) => {
+    event.preventDefault();
+    const amount = Number(bulkGrant.amount);
+    if (!Number.isSafeInteger(amount) || amount <= 0 || amount > 1000000) {
+      setBulkGrantStatus({ loading: false, error: 'Enter a whole PRINTS amount between 1 and 1,000,000.', success: '' });
+      return;
+    }
+    if (!window.confirm(`Grant ${amount.toLocaleString()} PRINTS to EVERY user account? This adds a separate wallet credit to all users and cannot be undone from this screen.`)) return;
+
+    setBulkGrantStatus({ loading: true, error: '', success: '' });
+    try {
+      const authHeaders = await getAdminAuthHeaders();
+      const response = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/grant-prints-all`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...authHeaders },
+        body: JSON.stringify({ amount, note: bulkGrant.note.trim() }),
+      });
+      const result = await readFunctionResponse(response);
+      if (!response.ok) throw new Error(result.error || 'Could not grant PRINTS to all users.');
+      setBulkGrantStatus({
+        loading: false,
+        error: '',
+        success: [
+          `Granted ${amount.toLocaleString()} PRINTS to ${Number(result.grantedCount || 0).toLocaleString()} users.`,
+          `Emails sent: ${Number(result.emailsSent || 0).toLocaleString()}.`,
+          result.emailsFailed ? `Emails failed: ${Number(result.emailsFailed).toLocaleString()}.` : '',
+          result.emailWarning || '',
+        ].filter(Boolean).join(' '),
+      });
+      setBulkGrant({ amount: '', note: '' });
+      await loadRequests();
+    } catch (grantError) {
+      setBulkGrantStatus({ loading: false, error: grantError.message || 'Could not grant PRINTS to all users.', success: '' });
+    }
+  };
+
+  const grantPrintsToNewUsers = async (event) => {
+    event.preventDefault();
+    const amount = Number(newUserGrant.amount);
+    if (!Number.isSafeInteger(amount) || amount <= 0 || amount > 1000000) {
+      setNewUserGrantStatus({ loading: false, error: 'Enter a whole PRINTS amount between 1 and 1,000,000.', success: '' });
+      return;
+    }
+    if (!window.confirm(`Grant ${amount.toLocaleString()} PRINTS only to accounts that have never received any dashboard-admin PRINTS grant? Previous admin-grant recipients will be skipped.`)) return;
+    setNewUserGrantStatus({ loading: true, error: '', success: '' });
+    try {
+      const authHeaders = await getAdminAuthHeaders();
+      const response = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/grant-prints-new-users`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json', ...authHeaders },
+        body: JSON.stringify({ amount, note: newUserGrant.note.trim() }),
+      });
+      const result = await readFunctionResponse(response);
+      if (!response.ok) throw new Error(result.error || 'Could not grant PRINTS to new users.');
+      setNewUserGrantStatus({ loading: false, error: '', success: [
+        result.grantedCount
+          ? `Granted ${amount.toLocaleString()} PRINTS to ${Number(result.grantedCount).toLocaleString()} new users.`
+          : 'No newly eligible users were found.',
+        `Emails sent: ${Number(result.emailsSent || 0).toLocaleString()}.`,
+        result.emailsFailed ? `Emails failed: ${Number(result.emailsFailed).toLocaleString()}.` : '',
+        result.emailWarning || '',
+      ].filter(Boolean).join(' ') });
+      setNewUserGrant({ amount: '', note: '' });
+      await loadRequests();
+    } catch (grantError) {
+      setNewUserGrantStatus({ loading: false, error: grantError.message || 'Could not grant PRINTS to new users.', success: '' });
+    }
+  };
+
   const submitDecision = async (event) => {
     event.preventDefault();
     if (!dialog || sending) return;
@@ -376,6 +448,73 @@ export default function AffiliateRequests() {
         {grantResult && (
           <div className={`print-grant-result ${grantResult.type}`}>{grantResult.message}</div>
         )}
+      </section>
+
+      <section className="print-grant-panel">
+        <div className="print-grant-heading">
+          <div className="print-grant-icon"><Users size={20} /></div>
+          <div>
+            <h2>Grant PRINTS to all users</h2>
+            <p>Add the same wallet credit to every active user profile. Every grant is recorded separately in the wallet ledger.</p>
+          </div>
+        </div>
+        <form className="print-grant-form" onSubmit={grantPrintsToAll}>
+          <label>
+            PRINTS per user
+            <input
+              type="number"
+              required
+              min="1"
+              max="1000000"
+              step="1"
+              value={bulkGrant.amount}
+              onChange={(event) => setBulkGrant((current) => ({ ...current, amount: event.target.value }))}
+              placeholder="100"
+            />
+          </label>
+          <label>
+            Note
+            <input
+              type="text"
+              maxLength={500}
+              value={bulkGrant.note}
+              onChange={(event) => setBulkGrant((current) => ({ ...current, note: event.target.value }))}
+              placeholder="Reason for this bulk grant"
+            />
+          </label>
+          <button type="submit" disabled={bulkGrantStatus.loading}>
+            <Users size={16} /> {bulkGrantStatus.loading ? 'Granting to all...' : 'Grant to all users'}
+          </button>
+        </form>
+        {bulkGrantStatus.error && <div className="print-grant-result error">{bulkGrantStatus.error}</div>}
+        {bulkGrantStatus.success && <div className="print-grant-result success">{bulkGrantStatus.success}</div>}
+      </section>
+
+      <section className="print-grant-panel">
+        <div className="print-grant-heading">
+          <div className="print-grant-icon"><Gift size={20} /></div>
+          <div>
+            <h2>Grant PRINTS to new users only</h2>
+            <p>Credits accounts that have never received an individual, all-user, or new-user dashboard grant. Earned rewards do not disqualify them.</p>
+          </div>
+        </div>
+        <form className="print-grant-form" onSubmit={grantPrintsToNewUsers}>
+          <label>
+            PRINTS per new user
+            <input type="number" required min="1" max="1000000" step="1" value={newUserGrant.amount}
+              onChange={(event) => setNewUserGrant(current => ({ ...current, amount: event.target.value }))} placeholder="100" />
+          </label>
+          <label>
+            Note
+            <input type="text" maxLength={500} value={newUserGrant.note}
+              onChange={(event) => setNewUserGrant(current => ({ ...current, note: event.target.value }))} placeholder="Welcome note (optional)" />
+          </label>
+          <button type="submit" disabled={newUserGrantStatus.loading}>
+            <Gift size={16} /> {newUserGrantStatus.loading ? 'Granting to new users...' : 'Grant to new users'}
+          </button>
+        </form>
+        {newUserGrantStatus.error && <div className="print-grant-result error">{newUserGrantStatus.error}</div>}
+        {newUserGrantStatus.success && <div className="print-grant-result success">{newUserGrantStatus.success}</div>}
       </section>
 
       <div className="affiliate-toolbar">
