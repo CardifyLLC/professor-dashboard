@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { supabaseAdmin } from '../services/supabaseClient';
+import { getAdminAuthHeaders, supabaseAdmin } from '../services/supabaseClient';
 
 const formatCurrency = (cents) =>
   new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format((cents || 0) / 100);
@@ -65,6 +65,21 @@ const Profiles = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [exporting, setExporting] = useState(false);
+  const [bulkGrant, setBulkGrant] = useState({ amount: '', note: '' });
+  const [bulkGrantStatus, setBulkGrantStatus] = useState({ loading: false, error: '', success: '' });
+  const [newUserGrant, setNewUserGrant] = useState({ amount: '', note: '' });
+  const [newUserGrantStatus, setNewUserGrantStatus] = useState({ loading: false, error: '', success: '' });
+  const [newUserEmails, setNewUserEmails] = useState(new Set());
+
+  const loadNewUserEligibility = async () => {
+    const headers = await getAdminAuthHeaders();
+    const response = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/grant-prints-new-users`, {
+      method: 'GET', headers,
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(result.error || 'Could not load new-user eligibility.');
+    setNewUserEmails(new Set(Array.isArray(result.eligibleEmails) ? result.eligibleEmails : []));
+  };
 
   // Filters
   const [search, setSearch] = useState('');
@@ -114,6 +129,74 @@ const Profiles = () => {
     }
   };
 
+  const grantPrintsToAll = async () => {
+    const amount = Number(bulkGrant.amount);
+    if (!Number.isSafeInteger(amount) || amount <= 0 || amount > 1000000) {
+      setBulkGrantStatus({ loading: false, error: 'Enter a whole PRINTS amount between 1 and 1,000,000.', success: '' });
+      return;
+    }
+    const confirmed = window.confirm(
+      `Grant ${amount.toLocaleString()} PRINTS to EVERY user account? This will add a separate wallet credit to all users and cannot be undone from this screen.`
+    );
+    if (!confirmed) return;
+
+    setBulkGrantStatus({ loading: true, error: '', success: '' });
+    try {
+      const headers = await getAdminAuthHeaders();
+      const response = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/grant-prints-all`, {
+        method: 'POST',
+        headers: { ...headers, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ amount, note: bulkGrant.note.trim() }),
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.error || `Bulk grant failed with HTTP ${response.status}.`);
+      setBulkGrantStatus({
+        loading: false,
+        error: '',
+        success: [
+          `Granted ${amount.toLocaleString()} PRINTS to ${Number(result.grantedCount || 0).toLocaleString()} users.`,
+          `Emails sent: ${Number(result.emailsSent || 0).toLocaleString()}.`,
+          result.emailsFailed ? `Emails failed: ${Number(result.emailsFailed).toLocaleString()}.` : '',
+          result.emailWarning || '',
+        ].filter(Boolean).join(' '),
+      });
+      setBulkGrant({ amount: '', note: '' });
+    } catch (err) {
+      setBulkGrantStatus({ loading: false, error: err.message || 'Could not grant PRINTS to all users.', success: '' });
+    }
+  };
+
+  const grantPrintsToNewUsers = async () => {
+    const amount = Number(newUserGrant.amount);
+    if (!Number.isSafeInteger(amount) || amount <= 0 || amount > 1000000) {
+      setNewUserGrantStatus({ loading: false, error: 'Enter a whole PRINTS amount between 1 and 1,000,000.', success: '' });
+      return;
+    }
+    if (!window.confirm(`Grant ${amount.toLocaleString()} PRINTS only to accounts that have never received any dashboard-admin PRINTS grant? Previous admin-grant recipients will be skipped.`)) return;
+    setNewUserGrantStatus({ loading: true, error: '', success: '' });
+    try {
+      const headers = await getAdminAuthHeaders();
+      const response = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/grant-prints-new-users`, {
+        method: 'POST', headers: { ...headers, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ amount, note: newUserGrant.note.trim() }),
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.error || `New-user grant failed with HTTP ${response.status}.`);
+      setNewUserGrantStatus({ loading: false, error: '', success: [
+        result.grantedCount
+          ? `Granted ${amount.toLocaleString()} PRINTS to ${Number(result.grantedCount).toLocaleString()} new users.`
+          : 'No newly eligible users were found.',
+        `Emails sent: ${Number(result.emailsSent || 0).toLocaleString()}.`,
+        result.emailsFailed ? `Emails failed: ${Number(result.emailsFailed).toLocaleString()}.` : '',
+        result.emailWarning || '',
+      ].filter(Boolean).join(' ') });
+      setNewUserGrant({ amount: '', note: '' });
+      await loadNewUserEligibility();
+    } catch (err) {
+      setNewUserGrantStatus({ loading: false, error: err.message || 'Could not grant PRINTS to new users.', success: '' });
+    }
+  };
+
   useEffect(() => {
     const load = async () => {
       setLoading(true);
@@ -127,6 +210,7 @@ const Profiles = () => {
         if (ordersRes.error) throw ordersRes.error;
         setProfiles(profilesRes.data || []);
         setOrders(ordersRes.data || []);
+        await loadNewUserEligibility();
       } catch (err) {
         setError(err.message || 'Failed to load profiles');
       } finally {
@@ -188,6 +272,87 @@ const Profiles = () => {
         >
           {exporting ? 'Downloading...' : 'Download all'}
         </button>
+      </div>
+
+      <div style={{
+        marginBottom: '24px', padding: '18px', borderRadius: '12px',
+        border: '1px solid #f59e0b', background: 'rgba(245, 158, 11, 0.08)',
+      }}>
+        <div style={{ marginBottom: '12px' }}>
+          <div style={{ color: 'var(--text-primary)', fontWeight: 700 }}>Grant PRINTS to all users</div>
+          <div style={{ marginTop: '4px', color: 'var(--text-muted)', fontSize: '0.8rem' }}>
+            Adds the same wallet credit to every active user profile. Each grant is recorded in the PRINTS ledger.
+          </div>
+        </div>
+        <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
+          <input
+            type="number"
+            min="1"
+            step="1"
+            max="1000000"
+            value={bulkGrant.amount}
+            onChange={(event) => setBulkGrant(current => ({ ...current, amount: event.target.value }))}
+            placeholder="PRINTS per user"
+            style={{
+              width: '170px', padding: '9px 12px', borderRadius: '8px',
+              border: '1px solid var(--border-color)', background: 'var(--bg-card)', color: 'var(--text-primary)',
+            }}
+          />
+          <input
+            type="text"
+            maxLength={500}
+            value={bulkGrant.note}
+            onChange={(event) => setBulkGrant(current => ({ ...current, note: event.target.value }))}
+            placeholder="Reason or note (optional)"
+            style={{
+              flex: '1 1 260px', padding: '9px 12px', borderRadius: '8px',
+              border: '1px solid var(--border-color)', background: 'var(--bg-card)', color: 'var(--text-primary)',
+            }}
+          />
+          <button
+            type="button"
+            onClick={() => void grantPrintsToAll()}
+            disabled={bulkGrantStatus.loading}
+            style={{
+              padding: '9px 16px', borderRadius: '8px', border: 0,
+              background: bulkGrantStatus.loading ? 'var(--bg-hover)' : '#f59e0b',
+              color: bulkGrantStatus.loading ? 'var(--text-muted)' : '#111827',
+              fontWeight: 700, cursor: bulkGrantStatus.loading ? 'wait' : 'pointer', whiteSpace: 'nowrap',
+            }}
+          >
+            {bulkGrantStatus.loading ? 'Granting...' : 'Grant to all users'}
+          </button>
+        </div>
+        {bulkGrantStatus.error && <div style={{ marginTop: '10px', color: '#ef4444', fontSize: '0.82rem' }}>{bulkGrantStatus.error}</div>}
+        {bulkGrantStatus.success && <div style={{ marginTop: '10px', color: '#10b981', fontSize: '0.82rem', fontWeight: 600 }}>{bulkGrantStatus.success}</div>}
+      </div>
+
+      <div style={{
+        marginBottom: '24px', padding: '18px', borderRadius: '12px',
+        border: '1px solid #3b82f6', background: 'rgba(59, 130, 246, 0.08)',
+      }}>
+        <div style={{ marginBottom: '12px' }}>
+          <div style={{ color: 'var(--text-primary)', fontWeight: 700 }}>Grant PRINTS to new users only</div>
+          <div style={{ marginTop: '4px', color: 'var(--text-muted)', fontSize: '0.8rem' }}>
+            Credits only accounts that have never received an individual, all-user, or new-user dashboard grant. Earned cashback and affiliate rewards do not disqualify them.
+          </div>
+        </div>
+        <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
+          <input type="number" min="1" step="1" max="1000000" value={newUserGrant.amount}
+            onChange={(event) => setNewUserGrant(current => ({ ...current, amount: event.target.value }))}
+            placeholder="PRINTS per new user"
+            style={{ width: '190px', padding: '9px 12px', borderRadius: '8px', border: '1px solid var(--border-color)', background: 'var(--bg-card)', color: 'var(--text-primary)' }} />
+          <input type="text" maxLength={500} value={newUserGrant.note}
+            onChange={(event) => setNewUserGrant(current => ({ ...current, note: event.target.value }))}
+            placeholder="Welcome note (optional)"
+            style={{ flex: '1 1 260px', padding: '9px 12px', borderRadius: '8px', border: '1px solid var(--border-color)', background: 'var(--bg-card)', color: 'var(--text-primary)' }} />
+          <button type="button" onClick={() => void grantPrintsToNewUsers()} disabled={newUserGrantStatus.loading}
+            style={{ padding: '9px 16px', borderRadius: '8px', border: 0, background: newUserGrantStatus.loading ? 'var(--bg-hover)' : '#3b82f6', color: newUserGrantStatus.loading ? 'var(--text-muted)' : '#fff', fontWeight: 700, cursor: newUserGrantStatus.loading ? 'wait' : 'pointer', whiteSpace: 'nowrap' }}>
+            {newUserGrantStatus.loading ? 'Granting...' : 'Grant to new users'}
+          </button>
+        </div>
+        {newUserGrantStatus.error && <div style={{ marginTop: '10px', color: '#ef4444', fontSize: '0.82rem' }}>{newUserGrantStatus.error}</div>}
+        {newUserGrantStatus.success && <div style={{ marginTop: '10px', color: '#10b981', fontSize: '0.82rem', fontWeight: 600 }}>{newUserGrantStatus.success}</div>}
       </div>
 
       {/* Filters */}
@@ -300,8 +465,16 @@ const Profiles = () => {
 
                   {/* Name + email */}
                   <div style={{ minWidth: 0 }}>
-                    <div style={{ fontWeight: '600', color: 'var(--text-primary)', fontSize: '0.9rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                      {profile.full_name || <span style={{ color: 'var(--text-muted)' }}>No name</span>}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '7px', minWidth: 0 }}>
+                      <div style={{ fontWeight: '600', color: 'var(--text-primary)', fontSize: '0.9rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                        {profile.full_name || <span style={{ color: 'var(--text-muted)' }}>No name</span>}
+                      </div>
+                      {newUserEmails.has(String(profile.email || '').trim().toLowerCase()) && (
+                        <span style={{
+                          flexShrink: 0, borderRadius: '999px', background: '#2563eb', color: '#fff',
+                          padding: '2px 7px', fontSize: '0.65rem', fontWeight: 800, letterSpacing: '0.06em',
+                        }}>NEW</span>
+                      )}
                     </div>
                     <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                       {profile.email}
