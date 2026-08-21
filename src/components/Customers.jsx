@@ -1,8 +1,35 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { parseAddress } from '../services/orderService';
+import { getAdminAuthHeaders } from '../services/supabaseClient';
 
 const Customers = ({ orders }) => {
     const [copiedIndex, setCopiedIndex] = useState(null);
+    const [newUserEmails, setNewUserEmails] = useState(new Set());
+    const [newUserCount, setNewUserCount] = useState(null);
+
+    useEffect(() => {
+        let active = true;
+        const loadNewUserEligibility = async () => {
+            try {
+                const headers = await getAdminAuthHeaders();
+                const response = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/grant-prints-new-users`, {
+                    method: 'GET', headers,
+                });
+                const result = await response.json().catch(() => ({}));
+                if (!response.ok) throw new Error(result.error || 'Could not load new-user eligibility.');
+                if (!active) return;
+                const emails = Array.isArray(result.eligibleEmails) ? result.eligibleEmails : [];
+                setNewUserEmails(new Set(emails));
+                setNewUserCount(Number(result.eligibleCount || 0));
+            } catch (error) {
+                if (!active) return;
+                console.error('Could not load new-user eligibility:', error);
+                setNewUserCount(null);
+            }
+        };
+        void loadNewUserEligibility();
+        return () => { active = false; };
+    }, []);
 
     // Extract unique customers from orders
     const customers = orders.reduce((acc, order) => {
@@ -100,7 +127,16 @@ const Customers = ({ orders }) => {
 
     return (
         <div>
-            <h1 className="page-title">Customers</h1>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '20px' }}>
+                <h1 className="page-title" style={{ marginBottom: 0 }}>Customers</h1>
+                <span style={{
+                    display: 'inline-flex', alignItems: 'center', borderRadius: '999px',
+                    border: '1px solid #3b82f6', background: 'rgba(59, 130, 246, 0.14)',
+                    color: '#60a5fa', padding: '5px 10px', fontSize: '0.78rem', fontWeight: 700,
+                }} title="Registered accounts that have never received a dashboard-admin PRINTS grant">
+                    New users: {newUserCount === null ? '—' : newUserCount.toLocaleString()}
+                </span>
+            </div>
             <div className="data-table-container">
                 <table className="data-table">
                     <thead>
@@ -120,7 +156,18 @@ const Customers = ({ orders }) => {
                             
                             return (
                                 <tr key={index}>
-                                    <td style={{ fontWeight: 'bold' }}>{customer.name || 'Guest'}</td>
+                                    <td style={{ fontWeight: 'bold' }}>
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                                            <span>{customer.name || 'Guest'}</span>
+                                            {newUserEmails.has(String(customer.email || '').trim().toLowerCase()) && (
+                                                <span style={{
+                                                    borderRadius: '999px', background: '#2563eb', color: '#fff',
+                                                    padding: '2px 7px', fontSize: '0.65rem', fontWeight: 800,
+                                                    letterSpacing: '0.06em',
+                                                }}>NEW</span>
+                                            )}
+                                        </div>
+                                    </td>
                                     <td>{customer.email}</td>
                                     <td>{customer.phone || 'N/A'}</td>
                                     <td>
