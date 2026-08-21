@@ -7,5 +7,17 @@ verify_jwt = false
 [functions.stripe-analytics]
 verify_jwt = false
 
+[functions.award-cash-reward]
+verify_jwt = false
+
+[functions.grant-prints-all]
+verify_jwt = false
+
+[functions.grant-prints-new-users]
+verify_jwt = false
+
 [functions.export-all-emails]
+verify_jwt = false
+
+[functions.generate-order-pdf]
 verify_jwt = false
