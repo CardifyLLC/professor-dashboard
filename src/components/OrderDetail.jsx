@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { parseAddress, getOrderImageUrl, updateOrderCardData, updateOrderStatus, hasUploadedXml, downloadUploadedXml, rejectAndRefundOrder } from '../services/orderService';
+import React, { useEffect, useState } from 'react';
+import { parseAddress, getOrderImageUrl, updateOrderCardData, updateOrderStatus, hasUploadedXml, downloadUploadedXml, rejectAndRefundOrder, fetchOrderPdfGeneration, createOrderPdfDownloadUrl, createOrderPdfDownloadUrls } from '../services/orderService';
 import { ORDER_REJECTION_TEMPLATES, getRejectionTemplate } from '../constants/rejectionTemplates';
 import JSZip from 'jszip';
 import { saveAs } from 'file-saver';
@@ -20,6 +20,34 @@ const OrderDetail = ({ order, onClose, onOrderUpdated }) => {
     const [rejectAdminNote, setRejectAdminNote] = useState('');
     const [isRejectingOrder, setIsRejectingOrder] = useState(false);
     const [rejectActionMessage, setRejectActionMessage] = useState('');
+    const [orderPdf, setOrderPdf] = useState(null);
+    const [isLoadingOrderPdf, setIsLoadingOrderPdf] = useState(true);
+    const [isDownloadingOrderPdf, setIsDownloadingOrderPdf] = useState(false);
+
+    useEffect(() => {
+        let active = true;
+        let pollTimer;
+        const loadOrderPdf = async () => {
+            try {
+                const generation = await fetchOrderPdfGeneration(order.id);
+                if (active) {
+                    setOrderPdf(generation);
+                    if (generation?.status === 'processing') {
+                        pollTimer = window.setTimeout(loadOrderPdf, 3000);
+                    }
+                }
+            } catch (error) {
+                console.error('Could not load generated PDF status:', error);
+            } finally {
+                if (active) setIsLoadingOrderPdf(false);
+            }
+        };
+        loadOrderPdf();
+        return () => {
+            active = false;
+            if (pollTimer) window.clearTimeout(pollTimer);
+        };
+    }, [order.id]);
 
     const shippingAddress = parseAddress(order.shipping_address);
     // Parse card_images if it's a string, otherwise use as is
@@ -336,6 +364,48 @@ const OrderDetail = ({ order, onClose, onOrderUpdated }) => {
         }
     };
 
+    const downloadGeneratedOrderPdf = async () => {
+        if (!orderPdf?.storage_path || orderPdf.status !== 'completed') return;
+        setIsDownloadingOrderPdf(true);
+        try {
+            const storagePaths = Array.isArray(orderPdf.storage_paths) && orderPdf.storage_paths.length
+                ? orderPdf.storage_paths
+                : [orderPdf.storage_path];
+            if (storagePaths.length > 1) {
+                const { PDFDocument } = await import('pdf-lib');
+                const signedUrls = await createOrderPdfDownloadUrls(storagePaths);
+                const mergedPdf = await PDFDocument.create();
+                // Parts are stored in print order. Copy every front/back page
+                // into one document so the result matches Batcher PRO's
+                // single-file export while generation remains resumable.
+                for (const signedUrl of signedUrls) {
+                    const response = await fetch(signedUrl);
+                    if (!response.ok) {
+                        throw new Error(`Could not download a PDF part (HTTP ${response.status}).`);
+                    }
+                    const partPdf = await PDFDocument.load(await response.arrayBuffer());
+                    const pages = await mergedPdf.copyPages(partPdf, partPdf.getPageIndices());
+                    pages.forEach(page => mergedPdf.addPage(page));
+                }
+                const mergedBytes = await mergedPdf.save();
+                saveAs(new Blob([mergedBytes], { type: 'application/pdf' }), `order-${orderId}.pdf`);
+                return;
+            }
+            const signedUrl = await createOrderPdfDownloadUrl(storagePaths[0]);
+            const link = document.createElement('a');
+            link.href = signedUrl;
+            link.download = `order-${orderId}.pdf`;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        } catch (error) {
+            console.error('Could not download generated order PDF:', error);
+            alert(error.message || 'Could not download this order PDF.');
+        } finally {
+            setIsDownloadingOrderPdf(false);
+        }
+    };
+
     const markOrderCompleted = async () => {
         if (isCompleted) return;
 
@@ -408,6 +478,65 @@ const OrderDetail = ({ order, onClose, onOrderUpdated }) => {
                         )}
                     </div>
                     <div className="flex items-center gap-2">
+                        {orderPdf?.status === 'completed' && orderPdf.storage_path && (
+                            <button
+                                type="button"
+                                onClick={downloadGeneratedOrderPdf}
+                                disabled={isDownloadingOrderPdf}
+                                className="order-pdf-download-btn"
+                                style={{
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    gap: '8px',
+                                    minHeight: '38px',
+                                    padding: '5px 14px 5px 6px',
+                                    border: '1px solid rgba(96, 165, 250, 0.55)',
+                                    borderRadius: '999px',
+                                    background: 'linear-gradient(135deg, #2563eb 0%, #4f46e5 100%)',
+                                    color: '#fff',
+                                    fontSize: '0.82rem',
+                                    fontWeight: 700,
+                                    whiteSpace: 'nowrap',
+                                    cursor: isDownloadingOrderPdf ? 'wait' : 'pointer',
+                                    boxShadow: '0 6px 18px rgba(37, 99, 235, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.18)',
+                                    opacity: isDownloadingOrderPdf ? 0.65 : 1,
+                                }}
+                                title="Download this order's automatically generated PDF"
+                            >
+                                {isDownloadingOrderPdf
+                                    ? <Loader2 className="w-4 h-4 animate-spin" />
+                                    : (
+                                        <span
+                                            className="order-pdf-download-icon"
+                                            style={{
+                                                display: 'inline-flex',
+                                                alignItems: 'center',
+                                                justifyContent: 'center',
+                                                width: '28px',
+                                                height: '28px',
+                                                borderRadius: '50%',
+                                                background: 'rgba(255, 255, 255, 0.16)',
+                                                flexShrink: 0,
+                                            }}
+                                        >
+                                            <Download className="w-4 h-4" />
+                                        </span>
+                                    )}
+                                {isDownloadingOrderPdf ? 'Downloading...' : 'Download PDF'}
+                            </button>
+                        )}
+                        {!isLoadingOrderPdf && orderPdf?.status === 'processing' && (
+                            <span style={{ color: 'var(--text-muted)', fontSize: '0.8rem', whiteSpace: 'nowrap' }}>
+                                PDF processing{orderPdf.total_cards > 0
+                                    ? `… ${orderPdf.processed_cards}/${orderPdf.total_cards}`
+                                    : '…'}
+                            </span>
+                        )}
+                        {!isLoadingOrderPdf && orderPdf?.status === 'failed' && (
+                            <span title={orderPdf.error_message || 'PDF generation failed'} style={{ color: '#f87171', fontSize: '0.8rem', whiteSpace: 'nowrap' }}>
+                                PDF failed
+                            </span>
+                        )}
                         <button
                             onClick={() => setShowImagesOnly(!showImagesOnly)}
                             className="p-2 rounded hover:bg-slate-100 transition-colors"
@@ -592,10 +721,13 @@ const OrderDetail = ({ order, onClose, onOrderUpdated }) => {
                                             <button
                                                 onClick={downloadXmlFile}
                                                 type="button"
-                                                className="flex items-center gap-2 px-4 py-2 bg-emerald-600 text-white rounded hover:bg-emerald-700 font-semibold text-sm transition-all shadow-sm"
+                                                className="order-xml-download-btn"
+                                                title="Download the original XML order file"
                                             >
-                                                <Download className="w-4 h-4" />
-                                                Download XML
+                                                <span className="order-xml-download-icon">
+                                                    <Download className="w-4 h-4" />
+                                                </span>
+                                                <span>Download XML</span>
                                             </button>
                                         )}
                                         <button
