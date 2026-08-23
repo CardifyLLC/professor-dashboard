@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { hasUploadedXml, isXmlOrder } from '../services/orderService';
+import { awardCashPurchaseReward, fetchOrderPdfGenerations, hasUploadedXml, isXmlOrder } from '../services/orderService';
 
 const statusTabs = [
     { value: 'all', label: 'All' },
@@ -15,11 +15,40 @@ const OrderList = ({ orders, onSelectOrder, page, setPage, totalCount, pageSize,
     const [selectedIds, setSelectedIds] = useState(new Set());
     const [bulkUpdating, setBulkUpdating] = useState(false);
     const [updatingOrderId, setUpdatingOrderId] = useState(null);
+    const [rewardingOrderId, setRewardingOrderId] = useState(null);
+    const [rewardMessages, setRewardMessages] = useState({});
+    const [pdfGenerations, setPdfGenerations] = useState({});
 
     // Clear selection whenever the visible orders change (page change, filter, search, etc.)
     useEffect(() => {
         setSelectedIds(new Set());
     }, [page, activeStatus, totalCount]);
+
+    useEffect(() => {
+        let active = true;
+        let timer;
+        const orderIds = orders.map(order => order.id);
+
+        const loadPdfStatuses = async () => {
+            try {
+                const generations = await fetchOrderPdfGenerations(orderIds);
+                if (!active) return;
+                setPdfGenerations(Object.fromEntries(generations.map(item => [item.order_id, item])));
+                if (generations.some(item => item.status === 'processing')) {
+                    timer = window.setTimeout(loadPdfStatuses, 3000);
+                }
+            } catch (error) {
+                console.error('Could not load PDF generation statuses:', error);
+            }
+        };
+
+        if (orderIds.length) loadPdfStatuses();
+        else setPdfGenerations({});
+        return () => {
+            active = false;
+            if (timer) window.clearTimeout(timer);
+        };
+    }, [orders]);
 
     const formatDate = (dateString) => {
         return new Date(dateString).toLocaleDateString('en-US', {
@@ -85,6 +114,28 @@ const OrderList = ({ orders, onSelectOrder, page, setPage, totalCount, pageSize,
             await onBulkStatusChange([orderId], 'paid');
         } finally {
             setUpdatingOrderId(null);
+        }
+    };
+
+    const handleGrantCashReward = async (event, order) => {
+        event.stopPropagation();
+        if (!window.confirm(`Grant another 5% cash-purchase PRINTS reward for order #${order.id.slice(0, 8)}? Every confirmed click adds a new wallet credit.`)) return;
+        setRewardingOrderId(order.id);
+        setRewardMessages(current => ({ ...current, [order.id]: null }));
+        try {
+            const result = await awardCashPurchaseReward(order.id);
+            const message = result.awarded
+                ? `Granted ${Number(result.prints || 0).toLocaleString()} PRINTS`
+                : result.reason === 'already_awarded' ? 'Already granted'
+                    : result.reason === 'reward_below_one_print' ? 'Below 1 PRINT'
+                        : result.reason === 'signed_in_user_required' ? 'Guest order - no wallet'
+                            : result.reason === 'order_not_paid' ? 'Order is not paid'
+                                : `Not granted: ${String(result.reason || 'unknown reason').replaceAll('_', ' ')}`;
+            setRewardMessages(current => ({ ...current, [order.id]: { ok: Boolean(result.awarded), text: message } }));
+        } catch (error) {
+            setRewardMessages(current => ({ ...current, [order.id]: { ok: false, text: error.message || 'Reward failed' } }));
+        } finally {
+            setRewardingOrderId(null);
         }
     };
 
@@ -187,6 +238,7 @@ const OrderList = ({ orders, onSelectOrder, page, setPage, totalCount, pageSize,
                         <th>Status</th>
                         <th>Total</th>
                         <th>Items</th>
+                        <th>PDF</th>
                         <th>Action</th>
                     </tr>
                 </thead>
@@ -196,6 +248,7 @@ const OrderList = ({ orders, onSelectOrder, page, setPage, totalCount, pageSize,
                         const hasXml = hasUploadedXml(order);
                         const isCardstockOrder = order.metadata?.productType === 'cardstock';
                         const normalizedStatus = String(order.status || '').toLowerCase();
+                        const pdfGeneration = pdfGenerations[order.id];
                         const isSelected = selectedIds.has(order.id);
                         return (
                         <tr
@@ -243,7 +296,51 @@ const OrderList = ({ orders, onSelectOrder, page, setPage, totalCount, pageSize,
                                     </div>
                                 )}
                             </td>
+                            <td>
+                                {!pdfGeneration ? (
+                                    <span className="pdf-status-badge pdf-status-none">Not generated</span>
+                                ) : pdfGeneration.status === 'completed' ? (
+                                    <span className="pdf-status-badge pdf-status-ready" title={`${pdfGeneration.completed_parts || 1} PDF part(s) ready`}>
+                                        ✓ PDF ready
+                                    </span>
+                                ) : pdfGeneration.status === 'processing' ? (
+                                    <span className="pdf-status-badge pdf-status-processing">
+                                        <span className="pdf-status-dot" />
+                                        {pdfGeneration.total_cards > 0
+                                            ? `${pdfGeneration.processed_cards}/${pdfGeneration.total_cards}`
+                                            : 'Generating'}
+                                    </span>
+                                ) : (
+                                    <span className="pdf-status-badge pdf-status-failed" title={pdfGeneration.error_message || 'PDF generation failed'}>
+                                        ! PDF failed
+                                    </span>
+                                )}
+                            </td>
                             <td onClick={e => e.stopPropagation()}>
+                                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: '6px' }}>
+                                <button
+                                    type="button"
+                                    onClick={(event) => handleGrantCashReward(event, order)}
+                                    disabled={rewardingOrderId === order.id}
+                                    style={{
+                                        padding: '6px 12px',
+                                        background: rewardingOrderId === order.id ? 'var(--bg-hover)' : '#2563eb',
+                                        color: rewardingOrderId === order.id ? 'var(--text-muted)' : '#fff',
+                                        border: 'none', borderRadius: '8px',
+                                        cursor: rewardingOrderId === order.id ? 'not-allowed' : 'pointer',
+                                        fontWeight: 600, fontSize: '0.8rem', whiteSpace: 'nowrap',
+                                    }}
+                                >
+                                    {rewardingOrderId === order.id ? 'Granting...' : 'Grant 5%'}
+                                </button>
+                                {rewardMessages[order.id] && (
+                                    <span style={{
+                                        maxWidth: '150px', fontSize: '0.72rem', lineHeight: 1.25,
+                                        color: rewardMessages[order.id].ok ? '#10b981' : '#f59e0b',
+                                    }}>
+                                        {rewardMessages[order.id].text}
+                                    </span>
+                                )}
                                 {normalizedStatus === 'completed' ? (
                                     <button
                                         type="button"
@@ -264,8 +361,9 @@ const OrderList = ({ orders, onSelectOrder, page, setPage, totalCount, pageSize,
                                         {updatingOrderId === order.id ? 'Updating...' : 'Mark Incomplete'}
                                     </button>
                                 ) : (
-                                    <span style={{ color: 'var(--text-muted)' }}>-</span>
+                                    null
                                 )}
+                                </div>
                             </td>
                         </tr>
                     )})}
