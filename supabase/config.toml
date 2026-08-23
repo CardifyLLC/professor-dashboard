@@ -16,6 +16,9 @@ verify_jwt = false
 [functions.grant-prints-new-users]
 verify_jwt = false
 
+[functions.prints-analytics]
+verify_jwt = false
+
 [functions.export-all-emails]
 verify_jwt = false
 
