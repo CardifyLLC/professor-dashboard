@@ -62,6 +62,7 @@ const ORDER_STATUS_COLORS = {
 const Profiles = () => {
   const [profiles, setProfiles] = useState([]);
   const [orders, setOrders] = useState([]);
+  const [wallets, setWallets] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [exporting, setExporting] = useState(false);
@@ -202,14 +203,17 @@ const Profiles = () => {
       setLoading(true);
       setError(null);
       try {
-        const [profilesRes, ordersRes] = await Promise.all([
+        const [profilesRes, ordersRes, walletsRes] = await Promise.all([
           supabaseAdmin.from('profiles').select('*').order('created_at', { ascending: false }),
           supabaseAdmin.from('orders').select('id, user_id, customer_email, customer_name, status, total_amount_cents, created_at, quantity').order('created_at', { ascending: false }),
+          supabaseAdmin.from('wallet_accounts').select('user_id,balance,reserved_balance').eq('account_code', 'prints'),
         ]);
         if (profilesRes.error) throw profilesRes.error;
         if (ordersRes.error) throw ordersRes.error;
+        if (walletsRes.error) throw walletsRes.error;
         setProfiles(profilesRes.data || []);
         setOrders(ordersRes.data || []);
+        setWallets(walletsRes.data || []);
         await loadNewUserEligibility();
       } catch (err) {
         setError(err.message || 'Failed to load profiles');
@@ -228,7 +232,10 @@ const Profiles = () => {
     const totalSpent = profileOrders.reduce((sum, o) => sum + (o.total_amount_cents || 0), 0);
     const lastOrder = profileOrders[0] || null;
     const provider = p.metadata?.provider || null;
-    return { ...p, profileOrders, totalSpent, lastOrder, provider };
+    const wallet = wallets.find((candidate) => candidate.user_id === p.id);
+    const printsBalance = Number(wallet?.balance || 0);
+    const reservedPrints = Number(wallet?.reserved_balance || 0);
+    return { ...p, profileOrders, totalSpent, lastOrder, provider, printsBalance, reservedPrints };
   });
 
   // Apply filters
@@ -246,6 +253,8 @@ const Profiles = () => {
       if (sortBy === 'oldest') return new Date(a.created_at) - new Date(b.created_at);
       if (sortBy === 'most_orders') return b.profileOrders.length - a.profileOrders.length;
       if (sortBy === 'highest_spend') return b.totalSpent - a.totalSpent;
+      if (sortBy === 'highest_prints') return b.printsBalance - a.printsBalance;
+      if (sortBy === 'lowest_prints') return a.printsBalance - b.printsBalance;
       return 0;
     });
 
@@ -391,6 +400,8 @@ const Profiles = () => {
           <option value="oldest">Sort: Oldest</option>
           <option value="most_orders">Sort: Most Orders</option>
           <option value="highest_spend">Sort: Highest Spend</option>
+          <option value="highest_prints">Sort: Highest PRINTS</option>
+          <option value="lowest_prints">Sort: Lowest PRINTS</option>
         </select>
 
         <select
@@ -494,6 +505,16 @@ const Profiles = () => {
                     )}
                     <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '2px' }}>
                       Joined {formatDate(profile.created_at)}
+                    </div>
+                  </div>
+
+                  {/* PRINTS balance */}
+                  <div style={{ textAlign: 'center', minWidth: '72px' }}>
+                    <div style={{ fontWeight: '800', fontSize: '1rem', color: '#f59e0b' }}>
+                      {profile.printsBalance.toLocaleString()}
+                    </div>
+                    <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>
+                      PRINTS{profile.reservedPrints > 0 ? ` (${profile.reservedPrints.toLocaleString()} reserved)` : ''}
                     </div>
                   </div>
 
