@@ -15,6 +15,7 @@ import OrdersMap from './OrdersMap';
 import AffiliateRequests from './AffiliateRequests';
 import AffiliateOrders from './AffiliateOrders';
 import SharedDeckRequests from './SharedDeckRequests';
+import PrintsAnalytics from './PrintsAnalytics';
 
 const Dashboard = () => {
     const [orders, setOrders] = useState([]);
@@ -213,6 +214,12 @@ const Dashboard = () => {
                                 onClick={() => { setActiveView('profiles'); setMobileMenuOpen(false); }}
                             >
                                 <span>🪪</span> Profiles
+                            </div>
+                            <div
+                                className={`nav-item ${activeView === 'prints-analytics' ? 'active' : ''}`}
+                                onClick={() => { setActiveView('prints-analytics'); setMobileMenuOpen(false); }}
+                            >
+                                <span>PRINTS</span> PRINTS Analytics
                             </div>
                             <div
                                 className={`nav-item ${activeView === 'emailer' ? 'active' : ''}`}
@@ -452,6 +459,10 @@ const Dashboard = () => {
 
                                     {activeView === 'emailer' && (
                                         <Emailer />
+                                    )}
+
+                                    {activeView === 'prints-analytics' && (
+                                        <PrintsAnalytics />
                                     )}
 
                                     {activeView === 'subscribers' && (
