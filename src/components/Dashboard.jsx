@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import * as XLSX from 'xlsx';
+import { Coins } from 'lucide-react';
 import { fetchOrders, fetchAllOrders, fetchOrderById, fetchOrdersForExport, updateOrderStatus } from '../services/orderService';
 import { supabase } from '../services/supabaseClient';
 import OrderList from './OrderList';
@@ -219,7 +220,7 @@ const Dashboard = () => {
                                 className={`nav-item ${activeView === 'prints-analytics' ? 'active' : ''}`}
                                 onClick={() => { setActiveView('prints-analytics'); setMobileMenuOpen(false); }}
                             >
-                                <span>PRINTS</span> PRINTS Analytics
+                                <span><Coins size={18} /></span> PRINTS Analytics
                             </div>
                             <div
                                 className={`nav-item ${activeView === 'emailer' ? 'active' : ''}`}
