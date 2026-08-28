@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { TriangleAlert } from 'lucide-react';
 import { awardCashPurchaseReward, fetchOrderPdfGenerations, hasUploadedXml, isXmlOrder } from '../services/orderService';
 
 const statusTabs = [
@@ -162,7 +163,9 @@ const OrderList = ({ orders, onSelectOrder, page, setPage, totalCount, pageSize,
 
             {multiDeckOrders.length > 0 && (
                 <div className="multi-deck-page-alert" role="status">
-                    <span className="multi-deck-page-alert-icon" aria-hidden="true">⚠</span>
+                    <span className="multi-deck-page-alert-icon" aria-hidden="true">
+                        <TriangleAlert size={20} strokeWidth={2.5} />
+                    </span>
                     <div>
                         <strong>{multiDeckOrders.length} multi-deck order{multiDeckOrders.length === 1 ? '' : 's'} on this page</strong>
                         <span>Rows outlined in orange contain more than one deck. Confirm the deck count before processing.</span>
