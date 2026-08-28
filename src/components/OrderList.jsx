@@ -11,6 +11,11 @@ const statusTabs = [
     { value: 'cancelled', label: 'Cancelled' },
 ];
 
+const getDeckQuantity = (order) => {
+    const quantity = Number(order?.deck_quantity ?? order?.metadata?.deckQuantity ?? 1);
+    return Number.isFinite(quantity) && quantity > 0 ? quantity : 1;
+};
+
 const OrderList = ({ orders, onSelectOrder, page, setPage, totalCount, pageSize, activeStatus, onChangeStatus, onBulkStatusChange }) => {
     const [selectedIds, setSelectedIds] = useState(new Set());
     const [bulkUpdating, setBulkUpdating] = useState(false);
@@ -68,6 +73,7 @@ const OrderList = ({ orders, onSelectOrder, page, setPage, totalCount, pageSize,
     };
 
     const totalPages = Math.ceil(totalCount / pageSize);
+    const multiDeckOrders = orders.filter(order => getDeckQuantity(order) > 1);
 
     const visibleIds = orders.map(o => o.id);
     const allVisibleSelected = visibleIds.length > 0 && visibleIds.every(id => selectedIds.has(id));
@@ -153,6 +159,16 @@ const OrderList = ({ orders, onSelectOrder, page, setPage, totalCount, pageSize,
                     </button>
                 ))}
             </div>
+
+            {multiDeckOrders.length > 0 && (
+                <div className="multi-deck-page-alert" role="status">
+                    <span className="multi-deck-page-alert-icon" aria-hidden="true">⚠</span>
+                    <div>
+                        <strong>{multiDeckOrders.length} multi-deck order{multiDeckOrders.length === 1 ? '' : 's'} on this page</strong>
+                        <span>Rows outlined in orange contain more than one deck. Confirm the deck count before processing.</span>
+                    </div>
+                </div>
+            )}
 
             {/* Bulk action bar — appears when at least one row is selected */}
             {selectedIds.size > 0 && (
@@ -250,10 +266,13 @@ const OrderList = ({ orders, onSelectOrder, page, setPage, totalCount, pageSize,
                         const normalizedStatus = String(order.status || '').toLowerCase();
                         const pdfGeneration = pdfGenerations[order.id];
                         const isSelected = selectedIds.has(order.id);
+                        const deckQuantity = getDeckQuantity(order);
+                        const isMultiDeckOrder = !isCardstockOrder && deckQuantity > 1;
                         return (
                         <tr
                             key={order.id}
                             onClick={() => onSelectOrder(order)}
+                            className={isMultiDeckOrder ? 'multi-deck-order-row' : undefined}
                             style={isSelected ? { background: 'var(--bg-hover)' } : undefined}
                         >
                             <td style={{ textAlign: 'center' }} onClick={e => e.stopPropagation()}>
@@ -264,7 +283,10 @@ const OrderList = ({ orders, onSelectOrder, page, setPage, totalCount, pageSize,
                                     style={{ cursor: 'pointer', width: '16px', height: '16px' }}
                                 />
                             </td>
-                            <td>#{order.id.slice(0, 8)}</td>
+                            <td>
+                                <div className="order-id-cell">#{order.id.slice(0, 8)}</div>
+                                {isMultiDeckOrder && <span className="multi-deck-order-badge">MULTI-DECK ×{deckQuantity}</span>}
+                            </td>
                             <td>
                                 <div style={{ fontWeight: 'bold' }}>{order.customer_name || 'Guest'}</div>
                                 <div style={{ fontSize: '0.8em', color: 'var(--text-muted)' }}>{order.customer_email}</div>
@@ -291,8 +313,8 @@ const OrderList = ({ orders, onSelectOrder, page, setPage, totalCount, pageSize,
                             <td>
                                 <div>{order.quantity} {isCardstockOrder ? (order.quantity === 1 ? 'sheet' : 'sheets') : 'cards'}</div>
                                 {!isCardstockOrder && (
-                                    <div style={{ fontSize: '0.8em', fontWeight: 600, color: 'var(--text-muted)' }}>
-                                        {order.deck_quantity || order.metadata?.deckQuantity || 1} {(order.deck_quantity || order.metadata?.deckQuantity || 1) === 1 ? 'deck' : 'decks'}
+                                    <div className={isMultiDeckOrder ? 'multi-deck-item-count' : 'single-deck-item-count'}>
+                                        {deckQuantity} {deckQuantity === 1 ? 'deck' : 'decks'}
                                     </div>
                                 )}
                             </td>
