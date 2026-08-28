@@ -274,9 +274,10 @@ button {
   border-radius: 50%;
   background: #f97316;
   color: #fff;
-  font-size: 20px;
-  font-weight: 800;
+  line-height: 1;
 }
+
+.multi-deck-page-alert-icon svg { display: block; }
 
 .multi-deck-page-alert strong,
 .multi-deck-page-alert span {
