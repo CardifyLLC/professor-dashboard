@@ -46,13 +46,15 @@ export default function SharedDeckRequests() {
   const counts = ['pending', 'approved', 'rejected'].reduce((result, status) => ({ ...result, [status]: requests.filter(item => item.status === status).length }), {});
 
   const decide = async status => {
-    if (!selected || selected.status !== 'pending') return;
+    const revokingApproval = selected?.status === 'approved' && status === 'rejected';
+    if (!selected || (selected.status !== 'pending' && !revokingApproval)) return;
     const rejectionMessage = reason === 'Other' ? otherReason.trim() : reason.trim();
     if (status === 'rejected' && !rejectionMessage) {
       setReasonError('Please enter a rejection message. This message will be emailed to the deck owner.');
       reasonInputRef.current?.focus();
       return;
     }
+    if (revokingApproval && !window.confirm(`Revoke sharing approval for "${selected.design_name}"? Its public share link will stop working.`)) return;
     setReasonError('');
     setSaving(true); setError('');
     const { data: sessionData } = await supabase.auth.getSession();
@@ -85,7 +87,8 @@ export default function SharedDeckRequests() {
           <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}><div><h2 style={{ margin: 0 }}>{selected.design_name}</h2><p style={{ color: 'var(--text-muted)' }}>{selected.requester_name || 'Customer'} - {selected.requester_email}</p></div><strong style={{ color: colors[selected.status], textTransform: 'uppercase' }}>{selected.status}</strong></div>
           <h3 style={{ marginTop: 24 }}>Uploaded card images ({images.length})</h3>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(130px,1fr))', gap: 12, maxHeight: 430, overflowY: 'auto' }}>{images.map(image => <figure key={image.key} style={{ margin: 0 }}><img src={image.src} alt={image.label} style={{ width: '100%', aspectRatio: '2.5 / 3.5', objectFit: 'cover', borderRadius: 8, border: '1px solid var(--border-color)' }} /><figcaption style={{ marginTop: 4, color: 'var(--text-muted)', fontSize: 11, textAlign: 'center' }}>{image.label}</figcaption></figure>)}</div>
-          {selected.status === 'pending' ? <>
+          {(selected.status === 'pending' || selected.status === 'approved') ? <>
+            {selected.status === 'approved' && <div style={{ marginTop: 18, padding: 14, borderRadius: 8, border: '1px solid #f59e0b', color: '#fbbf24', background: 'rgba(245,158,11,.08)' }}>This share link is currently approved. Revoking approval will disable public access immediately.</div>}
             <label htmlFor="share-rejection-reason" style={{ display: 'block', marginTop: 18, marginBottom: 7, fontWeight: 700 }}>Rejection reason</label>
             <select ref={reasonInputRef} id="share-rejection-reason" value={reason} onChange={event => { setReason(event.target.value); setReasonError(''); }} aria-invalid={Boolean(reasonError)} style={{ width: '100%', boxSizing: 'border-box', padding: 12, borderRadius: 8, border: `1px solid ${reasonError ? '#f43f5e' : 'var(--border-color)'}`, background: 'var(--bg-secondary)', color: 'var(--text-primary)' }}>
               <option value="">Select a reason...</option>
@@ -93,7 +96,7 @@ export default function SharedDeckRequests() {
             </select>
             {reason === 'Other' && <textarea value={otherReason} onChange={event => { setOtherReason(event.target.value); if (event.target.value.trim()) setReasonError(''); }} placeholder="Enter the rejection explanation that will be emailed to the deck owner..." rows={3} style={{ width: '100%', boxSizing: 'border-box', marginTop: 10, padding: 12, borderRadius: 8, border: `1px solid ${reasonError ? '#f43f5e' : 'var(--border-color)'}`, background: 'var(--bg-secondary)', color: 'var(--text-primary)' }} />}
             {reasonError && <p role="alert" style={{ margin: '7px 0 0', color: '#fb7185', fontWeight: 700 }}>{reasonError}</p>}
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginTop: 12 }}><button disabled={saving} onClick={() => decide('rejected')} style={{ padding: 13, borderRadius: 8, border: '1px solid #f43f5e', background: 'transparent', color: '#fb7185', fontWeight: 700, cursor: 'pointer' }}>Reject</button><button disabled={saving} onClick={() => decide('approved')} style={{ padding: 13, borderRadius: 8, border: 0, background: '#10b981', color: 'white', fontWeight: 700, cursor: 'pointer' }}>{saving ? 'Saving...' : 'Approve'}</button></div>
+            <div style={{ display: 'grid', gridTemplateColumns: selected.status === 'pending' ? '1fr 1fr' : '1fr', gap: 12, marginTop: 12 }}><button disabled={saving} onClick={() => decide('rejected')} style={{ padding: 13, borderRadius: 8, border: '1px solid #f43f5e', background: 'transparent', color: '#fb7185', fontWeight: 700, cursor: saving ? 'wait' : 'pointer' }}>{saving ? 'Saving...' : selected.status === 'approved' ? 'Revoke Approval & Reject' : 'Reject'}</button>{selected.status === 'pending' && <button disabled={saving} onClick={() => decide('approved')} style={{ padding: 13, borderRadius: 8, border: 0, background: '#10b981', color: 'white', fontWeight: 700, cursor: saving ? 'wait' : 'pointer' }}>{saving ? 'Saving...' : 'Approve'}</button>}</div>
           </> : <div style={{ marginTop: 18, padding: 14, borderRadius: 8, border: `1px solid ${colors[selected.status]}`, color: colors[selected.status] }}>Decision recorded{selected.rejection_message ? `: ${selected.rejection_message}` : '.'}</div>}
         </>}
       </section>
