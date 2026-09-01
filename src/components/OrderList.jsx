@@ -17,6 +17,11 @@ const getDeckQuantity = (order) => {
     return Number.isFinite(quantity) && quantity > 0 ? quantity : 1;
 };
 
+const isProModeOrder = (order) => {
+    const metadata = order?.metadata && typeof order.metadata === 'object' ? order.metadata : {};
+    return metadata.proMode === true || metadata.pro_mode === true;
+};
+
 const OrderList = ({ orders, onSelectOrder, page, setPage, totalCount, pageSize, activeStatus, onChangeStatus, onBulkStatusChange }) => {
     const [selectedIds, setSelectedIds] = useState(new Set());
     const [bulkUpdating, setBulkUpdating] = useState(false);
@@ -266,6 +271,7 @@ const OrderList = ({ orders, onSelectOrder, page, setPage, totalCount, pageSize,
                         const xmlOrder = isXmlOrder(order);
                         const hasXml = hasUploadedXml(order);
                         const isCardstockOrder = order.metadata?.productType === 'cardstock';
+                        const proModeOrder = isProModeOrder(order);
                         const normalizedStatus = String(order.status || '').toLowerCase();
                         const pdfGeneration = pdfGenerations[order.id];
                         const isSelected = selectedIds.has(order.id);
@@ -303,6 +309,11 @@ const OrderList = ({ orders, onSelectOrder, page, setPage, totalCount, pageSize,
                                     {hasXml && (
                                         <span className="status-badge" style={{ backgroundColor: '#dbeafe', color: '#1d4ed8' }}>
                                             Has XML
+                                        </span>
+                                    )}
+                                    {proModeOrder && (
+                                        <span className="pro-mode-order-badge" title="Customer submitted original artwork using Pro Mode">
+                                            PRO MODE
                                         </span>
                                     )}
                                 </div>
