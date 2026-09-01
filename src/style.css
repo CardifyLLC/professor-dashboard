@@ -219,7 +219,16 @@ button {
   background-color: var(--bg-card);
   border-radius: 0.75rem;
   border: 1px solid var(--border-color);
-  overflow: hidden;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+@media (max-width: 1700px) {
+  .data-table-container .data-table th,
+  .data-table-container .data-table td {
+    padding-right: 0.75rem;
+    padding-left: 0.75rem;
+  }
 }
 
 .orders-filter-tabs {
