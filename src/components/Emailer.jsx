@@ -140,6 +140,19 @@ const renderCustomEmail = (value) => {
   return `<div style="font-family:Arial,sans-serif;line-height:1.6;color:#111827;max-width:600px;margin:0 auto;background:#ffffff;padding:32px 24px;">${escaped}</div>`;
 };
 
+const sanitizeEmailSubject = (value) => {
+  const withLineBreaks = String(value || '').replace(/<br\s*\/?\s*>/gi, ' ');
+  const parsed = new DOMParser().parseFromString(withLineBreaks, 'text/html');
+  return String(parsed.body.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 200);
+};
+
+const renderEmailPreview = (emailBody) => `${emailBody}
+<div style="margin:32px auto 0;max-width:600px;border-top:1px solid #e5e7eb;padding:20px 24px;text-align:center;font-family:Arial,sans-serif;">
+  <p style="margin:0 0 12px;color:#6b7280;font-size:12px;line-height:1.5;">You are receiving this email from TCGPlaytest.</p>
+  <a href="#" onclick="return false" style="display:inline-block;border:1px solid #9ca3af;border-radius:6px;padding:9px 18px;color:#4b5563;font-size:12px;font-weight:bold;text-decoration:none;">Unsubscribe</a>
+  <p style="margin:12px 0 0;color:#9ca3af;font-size:11px;line-height:1.5;">Each recipient receives a unique unsubscribe link here.</p>
+</div>`;
+
 const Emailer = () => {
   const [emails, setEmails] = useState([]);
   const [emailInput, setEmailInput] = useState('');
@@ -182,6 +195,7 @@ const Emailer = () => {
 
   const emailHasContent = usingTemplate ? Boolean(renderedHtml.trim()) : Boolean(body.trim());
   const finalBody = usingTemplate ? renderedHtml : renderCustomEmail(body);
+  const previewHtml = renderEmailPreview(finalBody);
 
   const handleGenerateCoupon = async (overrideExpiresAt = null, noExpiry = false) => {
     setGeneratingCoupon(true);
@@ -316,7 +330,9 @@ const Emailer = () => {
 
   const handleSend = async () => {
     const toSend = finalBody;
-    if (!emails.length || !subject.trim() || !emailHasContent) return;
+    const subjectToSend = sanitizeEmailSubject(subject);
+    if (!emails.length || !subjectToSend || !emailHasContent) return;
+    if (subjectToSend !== subject) setSubject(subjectToSend);
     setSending(true);
     setResult(null);
     try {
@@ -346,7 +362,7 @@ const Emailer = () => {
               ...authHeaders,
             },
             body: JSON.stringify({
-              emails: batches[index], subject, body: toSend, isHtml: true,
+              emails: batches[index], subject: subjectToSend, body: toSend, isHtml: true,
               campaignId, campaignTotal: emails.length,
               batchIndex: index, batchCount: batches.length,
             }),
@@ -540,12 +556,6 @@ const Emailer = () => {
                 <input type="text" value={vars.COUPON_CODE || ''} onChange={e => setVars(v => ({ ...v, COUPON_CODE: e.target.value }))} placeholder="PLAY-XXXX-XXXX" style={inputStyle} />
               </div>
 
-              <button
-                onClick={() => setShowPreview(v => !v)}
-                style={{ padding: '8px', background: 'var(--bg-hover)', border: '1px solid var(--border-color)', borderRadius: '8px', color: 'var(--text-primary)', cursor: 'pointer', fontSize: '0.85rem', fontWeight: '600' }}
-              >
-                {showPreview ? '✕ Hide preview' : '👁 Show preview'}
-              </button>
             </>
           ) : (
             <div>
@@ -553,6 +563,15 @@ const Emailer = () => {
               <textarea value={body} onChange={e => setBody(e.target.value)} placeholder="Write your email here..." rows={10} style={{ ...inputStyle, resize: 'vertical' }} />
             </div>
           )}
+
+          <button
+            type="button"
+            onClick={() => setShowPreview(v => !v)}
+            disabled={!emailHasContent}
+            style={{ padding: '8px', background: 'var(--bg-hover)', border: '1px solid var(--border-color)', borderRadius: '8px', color: emailHasContent ? 'var(--text-primary)' : 'var(--text-muted)', cursor: emailHasContent ? 'pointer' : 'not-allowed', fontSize: '0.85rem', fontWeight: '600' }}
+          >
+            {showPreview ? '✕ Hide preview' : '👁 Show preview'}
+          </button>
 
           {result && (
             <div style={{
@@ -584,13 +603,13 @@ const Emailer = () => {
       </div>
 
       {/* Preview */}
-      {usingTemplate && showPreview && (
+      {showPreview && emailHasContent && (
         <div style={{ marginTop: '24px', background: 'var(--bg-card)', border: '1px solid var(--border-color)', borderRadius: '12px', padding: '24px' }}>
           <h2 style={{ fontSize: '1rem', fontWeight: '600', color: 'var(--text-primary)', marginBottom: '16px' }}>Live Preview</h2>
           <div style={{ background: '#f3f4f6', padding: '24px', borderRadius: '8px' }}>
             <iframe
               title="Email Preview"
-              srcDoc={renderedHtml}
+              srcDoc={previewHtml}
               style={{ width: '100%', height: '700px', border: 'none', background: '#fff', borderRadius: '6px' }}
             />
           </div>
