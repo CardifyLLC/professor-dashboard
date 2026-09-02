@@ -10,7 +10,7 @@ import { getAdminAuthHeaders } from '../services/supabaseClient';
 const TEMPLATES = [
   {
     id: 'blank',
-    name: '— No template (plain text) —',
+    name: '— Custom email —',
     defaults: null,
     html: null,
   },
@@ -128,6 +128,18 @@ const renderTemplate = (tpl, vars) => {
   return html;
 };
 
+const renderCustomEmail = (value) => {
+  const escaped = String(value || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+    .replace(/\r?\n/g, '<br>');
+
+  return `<div style="font-family:Arial,sans-serif;line-height:1.6;color:#111827;max-width:600px;margin:0 auto;background:#ffffff;padding:32px 24px;">${escaped}</div>`;
+};
+
 const Emailer = () => {
   const [emails, setEmails] = useState([]);
   const [emailInput, setEmailInput] = useState('');
@@ -168,7 +180,8 @@ const Emailer = () => {
     return renderTemplate(selectedTemplate, vars);
   }, [selectedTemplate, vars, usingTemplate]);
 
-  const finalBody = usingTemplate ? renderedHtml : body;
+  const emailHasContent = usingTemplate ? Boolean(renderedHtml.trim()) : Boolean(body.trim());
+  const finalBody = usingTemplate ? renderedHtml : renderCustomEmail(body);
 
   const handleGenerateCoupon = async (overrideExpiresAt = null, noExpiry = false) => {
     setGeneratingCoupon(true);
@@ -303,27 +316,58 @@ const Emailer = () => {
 
   const handleSend = async () => {
     const toSend = finalBody;
-    if (!emails.length || !subject.trim() || !toSend.trim()) return;
+    if (!emails.length || !subject.trim() || !emailHasContent) return;
     setSending(true);
     setResult(null);
     try {
       const authHeaders = await getAdminAuthHeaders();
-      const res = await fetch(
-        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/send-bulk-email`,
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            ...authHeaders,
-          },
-          body: JSON.stringify({ emails, subject, body: toSend, isHtml: Boolean(usingTemplate) }),
-        }
+      const batchSize = 40;
+      const delayBetweenBatchesMs = 60_000;
+      const batches = Array.from({ length: Math.ceil(emails.length / batchSize) }, (_, index) =>
+        emails.slice(index * batchSize, (index + 1) * batchSize)
       );
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Failed to send');
+      let sent = 0;
+      let failed = 0;
+      let firstError = '';
+      let format = 'html';
+
+      for (let index = 0; index < batches.length; index += 1) {
+        setResult({
+          type: 'progress',
+          message: `Sending batch ${index + 1} of ${batches.length}… ${sent} delivered so far.`,
+        });
+        const res = await fetch(
+          `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/send-bulk-email`,
+          {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              ...authHeaders,
+            },
+            body: JSON.stringify({ emails: batches[index], subject, body: toSend, isHtml: true }),
+          }
+        );
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          throw new Error(`Batch ${index + 1} of ${batches.length} failed after ${sent} successful deliveries: ${data.error || 'Failed to send'}`);
+        }
+        sent += Number(data.sent || 0);
+        failed += Number(data.failed || 0);
+        format = data.format || format;
+        if (!firstError && data.firstError) firstError = data.firstError;
+
+        if (index < batches.length - 1) {
+          setResult({
+            type: 'progress',
+            message: `Batch ${index + 1} of ${batches.length} complete. ${sent} delivered; waiting 60 seconds before the next batch.`,
+          });
+          await new Promise(resolve => window.setTimeout(resolve, delayBetweenBatchesMs));
+        }
+      }
+
       setResult({
         type: 'success',
-        message: `Sent to ${data.sent} recipient${data.sent !== 1 ? 's' : ''} as ${data.format === 'html' ? 'HTML' : 'plain text'}.${data.failed > 0 ? ` ${data.failed} failed${data.firstError ? `: ${data.firstError}` : '.'}` : ''}`,
+        message: `Sent to ${sent} recipient${sent !== 1 ? 's' : ''} as ${format === 'html' ? 'HTML' : 'plain text'} in ${batches.length} batch${batches.length !== 1 ? 'es' : ''}.${failed > 0 ? ` ${failed} failed${firstError ? `: ${firstError}` : '.'}` : ''}`,
       });
       setEmails([]);
       setSubject('');
@@ -335,7 +379,7 @@ const Emailer = () => {
     }
   };
 
-  const canSend = emails.length > 0 && subject.trim() && finalBody.trim() && !sending;
+  const canSend = emails.length > 0 && subject.trim() && emailHasContent && !sending;
 
   const inputStyle = {
     width: '100%',
