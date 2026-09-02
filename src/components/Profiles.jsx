@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { getAdminAuthHeaders, supabaseAdmin } from '../services/supabaseClient';
+import { buildGrantEmail, sendBulkEmailCampaign } from '../services/bulkEmailCampaign';
 
 const formatCurrency = (cents) =>
   new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format((cents || 0) / 100);
@@ -151,14 +152,20 @@ const Profiles = () => {
       });
       const result = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(result.error || `Bulk grant failed with HTTP ${response.status}.`);
+      const message = buildGrantEmail({ amount, note: bulkGrant.note.trim() });
+      const delivery = await sendBulkEmailCampaign({
+        emails: result.notificationRecipients,
+        ...message,
+        onProgress: (progress) => setBulkGrantStatus({ loading: true, error: '', success: `PRINTS granted. ${progress}` }),
+      });
       setBulkGrantStatus({
         loading: false,
         error: '',
         success: [
           `Granted ${amount.toLocaleString()} PRINTS to ${Number(result.grantedCount || 0).toLocaleString()} users.`,
-          `Emails sent: ${Number(result.emailsSent || 0).toLocaleString()}.`,
-          result.emailsFailed ? `Emails failed: ${Number(result.emailsFailed).toLocaleString()}.` : '',
-          result.emailWarning || '',
+          `Emails accepted: ${delivery.sent.toLocaleString()}.`,
+          delivery.failed ? `Emails failed: ${delivery.failed.toLocaleString()}.` : '',
+          delivery.campaignId ? `Receipt ID: ${delivery.campaignId}.` : '',
         ].filter(Boolean).join(' '),
       });
       setBulkGrant({ amount: '', note: '' });
@@ -183,13 +190,19 @@ const Profiles = () => {
       });
       const result = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(result.error || `New-user grant failed with HTTP ${response.status}.`);
+      const message = buildGrantEmail({ amount, note: newUserGrant.note.trim(), welcome: true });
+      const delivery = await sendBulkEmailCampaign({
+        emails: result.notificationRecipients,
+        ...message,
+        onProgress: (progress) => setNewUserGrantStatus({ loading: true, error: '', success: `PRINTS granted. ${progress}` }),
+      });
       setNewUserGrantStatus({ loading: false, error: '', success: [
         result.grantedCount
           ? `Granted ${amount.toLocaleString()} PRINTS to ${Number(result.grantedCount).toLocaleString()} new users.`
           : 'No newly eligible users were found.',
-        `Emails sent: ${Number(result.emailsSent || 0).toLocaleString()}.`,
-        result.emailsFailed ? `Emails failed: ${Number(result.emailsFailed).toLocaleString()}.` : '',
-        result.emailWarning || '',
+        `Emails accepted: ${delivery.sent.toLocaleString()}.`,
+        delivery.failed ? `Emails failed: ${delivery.failed.toLocaleString()}.` : '',
+        delivery.campaignId ? `Receipt ID: ${delivery.campaignId}.` : '',
       ].filter(Boolean).join(' ') });
       setNewUserGrant({ amount: '', note: '' });
       await loadNewUserEligibility();
