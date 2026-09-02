@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Check, Clock, Copy, Download, ExternalLink, Gift, QrCode, RefreshCw, Search, Users, WalletCards, X } from 'lucide-react';
 import QRCode from 'qrcode';
 import { getAdminAuthHeaders, supabaseAdmin } from '../services/supabaseClient';
+import { buildGrantEmail, sendBulkEmailCampaign } from '../services/bulkEmailCampaign';
 import './AffiliateRequests.css';
 
 const FILTERS = ['all', 'pending', 'approved', 'rejected'];
@@ -250,14 +251,20 @@ export default function AffiliateRequests() {
       });
       const result = await readFunctionResponse(response);
       if (!response.ok) throw new Error(result.error || 'Could not grant PRINTS to all users.');
+      const message = buildGrantEmail({ amount, note: bulkGrant.note.trim() });
+      const delivery = await sendBulkEmailCampaign({
+        emails: result.notificationRecipients,
+        ...message,
+        onProgress: (progress) => setBulkGrantStatus({ loading: true, error: '', success: `PRINTS granted. ${progress}` }),
+      });
       setBulkGrantStatus({
         loading: false,
         error: '',
         success: [
           `Granted ${amount.toLocaleString()} PRINTS to ${Number(result.grantedCount || 0).toLocaleString()} users.`,
-          `Emails sent: ${Number(result.emailsSent || 0).toLocaleString()}.`,
-          result.emailsFailed ? `Emails failed: ${Number(result.emailsFailed).toLocaleString()}.` : '',
-          result.emailWarning || '',
+          `Emails accepted: ${delivery.sent.toLocaleString()}.`,
+          delivery.failed ? `Emails failed: ${delivery.failed.toLocaleString()}.` : '',
+          delivery.campaignId ? `Receipt ID: ${delivery.campaignId}.` : '',
         ].filter(Boolean).join(' '),
       });
       setBulkGrant({ amount: '', note: '' });
@@ -284,13 +291,19 @@ export default function AffiliateRequests() {
       });
       const result = await readFunctionResponse(response);
       if (!response.ok) throw new Error(result.error || 'Could not grant PRINTS to new users.');
+      const message = buildGrantEmail({ amount, note: newUserGrant.note.trim(), welcome: true });
+      const delivery = await sendBulkEmailCampaign({
+        emails: result.notificationRecipients,
+        ...message,
+        onProgress: (progress) => setNewUserGrantStatus({ loading: true, error: '', success: `PRINTS granted. ${progress}` }),
+      });
       setNewUserGrantStatus({ loading: false, error: '', success: [
         result.grantedCount
           ? `Granted ${amount.toLocaleString()} PRINTS to ${Number(result.grantedCount).toLocaleString()} new users.`
           : 'No newly eligible users were found.',
-        `Emails sent: ${Number(result.emailsSent || 0).toLocaleString()}.`,
-        result.emailsFailed ? `Emails failed: ${Number(result.emailsFailed).toLocaleString()}.` : '',
-        result.emailWarning || '',
+        `Emails accepted: ${delivery.sent.toLocaleString()}.`,
+        delivery.failed ? `Emails failed: ${delivery.failed.toLocaleString()}.` : '',
+        delivery.campaignId ? `Receipt ID: ${delivery.campaignId}.` : '',
       ].filter(Boolean).join(' ') });
       setNewUserGrant({ amount: '', note: '' });
       await loadRequests();
