@@ -321,6 +321,7 @@ const Emailer = () => {
     setResult(null);
     try {
       const authHeaders = await getAdminAuthHeaders();
+      const campaignId = crypto.randomUUID();
       const batchSize = 40;
       const delayBetweenBatchesMs = 60_000;
       const batches = Array.from({ length: Math.ceil(emails.length / batchSize) }, (_, index) =>
@@ -344,7 +345,11 @@ const Emailer = () => {
               'Content-Type': 'application/json',
               ...authHeaders,
             },
-            body: JSON.stringify({ emails: batches[index], subject, body: toSend, isHtml: true }),
+            body: JSON.stringify({
+              emails: batches[index], subject, body: toSend, isHtml: true,
+              campaignId, campaignTotal: emails.length,
+              batchIndex: index, batchCount: batches.length,
+            }),
           }
         );
         const data = await res.json().catch(() => ({}));
@@ -367,7 +372,7 @@ const Emailer = () => {
 
       setResult({
         type: 'success',
-        message: `Sent to ${sent} recipient${sent !== 1 ? 's' : ''} as ${format === 'html' ? 'HTML' : 'plain text'} in ${batches.length} batch${batches.length !== 1 ? 'es' : ''}.${failed > 0 ? ` ${failed} failed${firstError ? `: ${firstError}` : '.'}` : ''}`,
+        message: `Sent to ${sent} recipient${sent !== 1 ? 's' : ''} as ${format === 'html' ? 'HTML' : 'plain text'} in ${batches.length} batch${batches.length !== 1 ? 'es' : ''}.${failed > 0 ? ` ${failed} failed${firstError ? `: ${firstError}` : '.'}` : ''} Receipt ID: ${campaignId}`,
       });
       setEmails([]);
       setSubject('');
