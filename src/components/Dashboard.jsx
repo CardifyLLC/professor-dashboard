@@ -17,6 +17,7 @@ import AffiliateRequests from './AffiliateRequests';
 import AffiliateOrders from './AffiliateOrders';
 import SharedDeckRequests from './SharedDeckRequests';
 import PrintsAnalytics from './PrintsAnalytics';
+import EmailCampaignHistory from './EmailCampaignHistory';
 
 const Dashboard = () => {
     const [orders, setOrders] = useState([]);
@@ -227,6 +228,12 @@ const Dashboard = () => {
                                 onClick={() => { setActiveView('emailer'); setMobileMenuOpen(false); }}
                             >
                                 <span>✉️</span> Email Blast
+                            </div>
+                            <div
+                                className={`nav-item ${activeView === 'email-history' ? 'active' : ''}`}
+                                onClick={() => { setActiveView('email-history'); setMobileMenuOpen(false); }}
+                            >
+                                <span>✓</span> Email History
                             </div>
                             <div
                                 className={`nav-item ${activeView === 'subscribers' ? 'active' : ''}`}
@@ -460,6 +467,10 @@ const Dashboard = () => {
 
                                     {activeView === 'emailer' && (
                                         <Emailer />
+                                    )}
+
+                                    {activeView === 'email-history' && (
+                                        <EmailCampaignHistory />
                                     )}
 
                                     {activeView === 'prints-analytics' && (
