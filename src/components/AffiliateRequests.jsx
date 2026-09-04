@@ -287,7 +287,22 @@ export default function AffiliateRequests() {
       return;
     }
     if (!confirmed) {
-      setGrantConfirmation({ type: 'new', amount });
+      setGrantConfirmation({ type: 'new', amount, loadingRecipients: true, recipientCount: null, recipientError: '' });
+      try {
+        const authHeaders = await getAdminAuthHeaders();
+        const response = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/grant-prints-new-users`, {
+          method: 'GET', headers: authHeaders,
+        });
+        const result = await readFunctionResponse(response);
+        if (!response.ok) throw new Error(result.error || 'Could not load eligible new users.');
+        setGrantConfirmation((current) => current?.type === 'new'
+          ? { ...current, loadingRecipients: false, recipientCount: Number(result.eligibleCount || 0), recipientError: '' }
+          : current);
+      } catch (countError) {
+        setGrantConfirmation((current) => current?.type === 'new'
+          ? { ...current, loadingRecipients: false, recipientCount: null, recipientError: countError.message || 'Could not load eligible new users.' }
+          : current);
+      }
       return;
     }
     setGrantConfirmation(null);
@@ -642,7 +657,11 @@ export default function AffiliateRequests() {
               <strong>{grantConfirmation.amount.toLocaleString()} PRINTS per user</strong>
               <p>{grantConfirmation.type === 'all'
                 ? 'This will grant PRINTS to EVERY active user account, including existing users who may have received grants before.'
-                : 'This will grant PRINTS only to eligible accounts that have never received an individual, all-user, or new-user dashboard grant.'}</p>
+                : grantConfirmation.loadingRecipients
+                  ? 'Counting eligible new users…'
+                  : grantConfirmation.recipientError
+                    ? `Recipient count unavailable: ${grantConfirmation.recipientError}`
+                    : `This will grant PRINTS to ${grantConfirmation.recipientCount.toLocaleString()} eligible new user${grantConfirmation.recipientCount === 1 ? '' : 's'}. Eligible accounts have never received an individual, all-user, or new-user dashboard grant.`}</p>
               <p>Each credit is recorded in the wallet ledger. This action cannot be undone from this screen.</p>
             </div>
             <div className="affiliate-modal-actions">
@@ -650,11 +669,22 @@ export default function AffiliateRequests() {
               <button
                 type="button"
                 className={grantConfirmation.type === 'all' ? 'grant-confirm-all' : 'grant-confirm-new'}
+                disabled={grantConfirmation.type === 'new' && (
+                  grantConfirmation.loadingRecipients ||
+                  grantConfirmation.recipientCount === null ||
+                  grantConfirmation.recipientCount === 0
+                )}
                 onClick={() => grantConfirmation.type === 'all'
                   ? void grantPrintsToAll(null, true)
                   : void grantPrintsToNewUsers(null, true)}
               >
-                {grantConfirmation.type === 'all' ? 'Yes, grant to ALL users' : 'Yes, grant to new users'}
+                {grantConfirmation.type === 'all'
+                  ? 'Yes, grant to ALL users'
+                  : grantConfirmation.loadingRecipients
+                    ? 'Counting users…'
+                    : grantConfirmation.recipientCount === 0
+                      ? 'No eligible users'
+                      : `Yes, grant to ${grantConfirmation.recipientCount?.toLocaleString()} users`}
               </button>
             </div>
           </div>
