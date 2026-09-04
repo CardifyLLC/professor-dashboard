@@ -51,6 +51,7 @@ export default function AffiliateRequests() {
   const [bulkGrantStatus, setBulkGrantStatus] = useState({ loading: false, error: '', success: '' });
   const [newUserGrant, setNewUserGrant] = useState({ amount: '', note: '' });
   const [newUserGrantStatus, setNewUserGrantStatus] = useState({ loading: false, error: '', success: '' });
+  const [grantConfirmation, setGrantConfirmation] = useState(null);
   const [walletBalances, setWalletBalances] = useState({});
   const [qrPreview, setQrPreview] = useState(null);
   const [qrGenerating, setQrGenerating] = useState('');
@@ -232,14 +233,18 @@ export default function AffiliateRequests() {
     }
   };
 
-  const grantPrintsToAll = async (event) => {
-    event.preventDefault();
+  const grantPrintsToAll = async (event, confirmed = false) => {
+    event?.preventDefault();
     const amount = Number(bulkGrant.amount);
     if (!Number.isSafeInteger(amount) || amount <= 0 || amount > 1000000) {
       setBulkGrantStatus({ loading: false, error: 'Enter a whole PRINTS amount between 1 and 1,000,000.', success: '' });
       return;
     }
-    if (!window.confirm(`Grant ${amount.toLocaleString()} PRINTS to EVERY user account? This adds a separate wallet credit to all users and cannot be undone from this screen.`)) return;
+    if (!confirmed) {
+      setGrantConfirmation({ type: 'all', amount });
+      return;
+    }
+    setGrantConfirmation(null);
 
     setBulkGrantStatus({ loading: true, error: '', success: '' });
     try {
@@ -274,14 +279,18 @@ export default function AffiliateRequests() {
     }
   };
 
-  const grantPrintsToNewUsers = async (event) => {
-    event.preventDefault();
+  const grantPrintsToNewUsers = async (event, confirmed = false) => {
+    event?.preventDefault();
     const amount = Number(newUserGrant.amount);
     if (!Number.isSafeInteger(amount) || amount <= 0 || amount > 1000000) {
       setNewUserGrantStatus({ loading: false, error: 'Enter a whole PRINTS amount between 1 and 1,000,000.', success: '' });
       return;
     }
-    if (!window.confirm(`Grant ${amount.toLocaleString()} PRINTS only to accounts that have never received any dashboard-admin PRINTS grant? Previous admin-grant recipients will be skipped.`)) return;
+    if (!confirmed) {
+      setGrantConfirmation({ type: 'new', amount });
+      return;
+    }
+    setGrantConfirmation(null);
     setNewUserGrantStatus({ loading: true, error: '', success: '' });
     try {
       const authHeaders = await getAdminAuthHeaders();
@@ -495,7 +504,7 @@ export default function AffiliateRequests() {
               placeholder="Reason for this bulk grant"
             />
           </label>
-          <button type="submit" disabled={bulkGrantStatus.loading}>
+          <button type="submit" className="grant-all-button" disabled={bulkGrantStatus.loading}>
             <Users size={16} /> {bulkGrantStatus.loading ? 'Granting to all...' : 'Grant to all users'}
           </button>
         </form>
@@ -522,7 +531,7 @@ export default function AffiliateRequests() {
             <input type="text" maxLength={500} value={newUserGrant.note}
               onChange={(event) => setNewUserGrant(current => ({ ...current, note: event.target.value }))} placeholder="Welcome note (optional)" />
           </label>
-          <button type="submit" disabled={newUserGrantStatus.loading}>
+          <button type="submit" className="grant-new-button" disabled={newUserGrantStatus.loading}>
             <Gift size={16} /> {newUserGrantStatus.loading ? 'Granting to new users...' : 'Grant to new users'}
           </button>
         </form>
@@ -613,6 +622,42 @@ export default function AffiliateRequests() {
               </article>
             );
           })}
+        </div>
+      )}
+      {grantConfirmation && (
+        <div className="affiliate-modal-backdrop" role="presentation" onMouseDown={(event) => {
+          if (event.target === event.currentTarget) setGrantConfirmation(null);
+        }}>
+          <div className={`affiliate-modal grant-confirmation ${grantConfirmation.type === 'all' ? 'grant-confirmation-danger' : 'grant-confirmation-new'}`} role="alertdialog" aria-modal="true" aria-labelledby="grant-confirmation-title">
+            <div className="affiliate-modal-title">
+              <div>
+                <span id="grant-confirmation-title">
+                  {grantConfirmation.type === 'all' ? 'Warning: grant to every user?' : 'Confirm new-user grant'}
+                </span>
+                <p>Please review the audience carefully before continuing.</p>
+              </div>
+              <button type="button" aria-label="Close" onClick={() => setGrantConfirmation(null)}><X size={20} /></button>
+            </div>
+            <div className="grant-confirmation-summary">
+              <strong>{grantConfirmation.amount.toLocaleString()} PRINTS per user</strong>
+              <p>{grantConfirmation.type === 'all'
+                ? 'This will grant PRINTS to EVERY active user account, including existing users who may have received grants before.'
+                : 'This will grant PRINTS only to eligible accounts that have never received an individual, all-user, or new-user dashboard grant.'}</p>
+              <p>Each credit is recorded in the wallet ledger. This action cannot be undone from this screen.</p>
+            </div>
+            <div className="affiliate-modal-actions">
+              <button type="button" className="cancel" onClick={() => setGrantConfirmation(null)}>No, cancel</button>
+              <button
+                type="button"
+                className={grantConfirmation.type === 'all' ? 'grant-confirm-all' : 'grant-confirm-new'}
+                onClick={() => grantConfirmation.type === 'all'
+                  ? void grantPrintsToAll(null, true)
+                  : void grantPrintsToNewUsers(null, true)}
+              >
+                {grantConfirmation.type === 'all' ? 'Yes, grant to ALL users' : 'Yes, grant to new users'}
+              </button>
+            </div>
+          </div>
         </div>
       )}
       {qrPreview && (
