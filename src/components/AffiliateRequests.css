@@ -26,7 +26,12 @@
 .approved-members-controls button:disabled { opacity: .6; cursor: wait; }
 .affiliate-backfill-result { margin: -3px 0 12px; padding: 9px 11px; color: #34d399; background: rgba(16,185,129,.09); border: 1px solid rgba(16,185,129,.25); border-radius: 8px; font-size: .8rem; }
 .approved-members-list { display: grid; gap: 7px; }
-.approved-member-row { display: grid; grid-template-columns: minmax(200px, 1fr) 110px minmax(120px, .55fr) auto; align-items: center; gap: 14px; padding: 10px 12px; background: var(--bg-secondary); border-radius: 9px; }
+.approved-member-row { display: grid; grid-template-columns: minmax(180px, 1fr) 90px minmax(90px, .4fr) minmax(180px, .7fr) auto; align-items: center; gap: 14px; padding: 10px 12px; background: var(--bg-secondary); border-radius: 9px; }
+.approved-member-code { min-width: 0; }
+.approved-member-code strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-primary); font-size: .82rem; letter-spacing: .04em; }
+.approved-member-code span { color: var(--text-muted); font-size: .65rem; letter-spacing: .06em; }
+.affiliate-notify-toggle { display: flex !important; align-items: center; gap: 10px; margin-top: 14px; color: var(--text-primary) !important; font-size: .86rem !important; font-weight: 600 !important; text-transform: none !important; letter-spacing: normal !important; }
+.affiliate-notify-toggle input { width: 16px; height: 16px; margin: 0; accent-color: #3b82f6; }
 .approved-member-person { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .approved-member-person .affiliate-avatar { width: 34px; height: 34px; }
 .approved-member-person strong, .approved-member-person span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -141,7 +146,7 @@
   .print-grant-form { grid-template-columns: 1fr; }
   .print-grant-form button { justify-self: stretch; }
   .approved-member-row { grid-template-columns: 1fr auto; }
-  .approved-member-row > a, .approved-member-no-link { grid-column: 1; }
+  .approved-member-row > a, .approved-member-no-link, .approved-member-code, .approved-member-link-actions { grid-column: 1; }
   .approved-members-heading { align-items: flex-start; flex-direction: column; }
   .approved-members-controls { width: 100%; justify-content: space-between; }
 }
