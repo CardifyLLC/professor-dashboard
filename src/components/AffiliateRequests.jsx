@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Check, Clock, Copy, Download, ExternalLink, Gift, QrCode, RefreshCw, Search, Users, WalletCards, X } from 'lucide-react';
+import { Check, Clock, Copy, Download, ExternalLink, Gift, Pencil, QrCode, RefreshCw, Search, Users, WalletCards, X } from 'lucide-react';
 import QRCode from 'qrcode';
 import { getAdminAuthHeaders, supabaseAdmin } from '../services/supabaseClient';
 import { buildGrantEmail, sendBulkEmailCampaign } from '../services/bulkEmailCampaign';
@@ -57,6 +57,7 @@ export default function AffiliateRequests() {
   const [qrGenerating, setQrGenerating] = useState('');
   const [backfillingQr, setBackfillingQr] = useState(false);
   const [backfillResult, setBackfillResult] = useState('');
+  const [codeEditor, setCodeEditor] = useState(null);
 
   const loadRequests = useCallback(async () => {
     setLoading(true);
@@ -97,7 +98,7 @@ export default function AffiliateRequests() {
     const query = search.trim().toLowerCase();
     return requests.filter((request) => {
       const matchesFilter = filter === 'all' || displayStatus(request.status) === filter;
-      const matchesSearch = !query || [request.name, request.email, request.primary_channel, request.message]
+      const matchesSearch = !query || [request.name, request.email, request.primary_channel, request.message, request.affiliate_code, request.requested_affiliate_code]
         .some((value) => String(value || '').toLowerCase().includes(query));
       return matchesFilter && matchesSearch;
     });
@@ -107,6 +108,47 @@ export default function AffiliateRequests() {
     () => requests.filter((request) => displayStatus(request.status) === 'approved'),
     [requests],
   );
+
+  const openCodeEditor = (request) => setCodeEditor({
+    request,
+    affiliateCode: request.affiliate_code || '',
+    notify: true,
+    sending: false,
+    error: '',
+  });
+
+  const submitCodeEdit = async (event) => {
+    event.preventDefault();
+    if (!codeEditor || codeEditor.sending) return;
+    const nextCode = codeEditor.affiliateCode.trim().toUpperCase();
+    if (!/^[A-Z0-9_-]{3,32}$/.test(nextCode)) {
+      setCodeEditor((current) => current && ({ ...current, error: 'Use 3–32 letters, numbers, hyphens, or underscores.' }));
+      return;
+    }
+    setCodeEditor((current) => current && ({ ...current, sending: true, error: '' }));
+    try {
+      const authHeaders = await getAdminAuthHeaders();
+      const response = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/affiliate-request-action`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...authHeaders },
+        body: JSON.stringify({
+          action: 'update_code',
+          requestId: codeEditor.request.id,
+          affiliateCode: nextCode,
+          notify: codeEditor.notify,
+        }),
+      });
+      const result = await readFunctionResponse(response);
+      if (!response.ok) throw new Error(result.error || 'Could not update this affiliate code.');
+      if (result.request) {
+        setRequests((current) => current.map((request) => request.id === result.request.id ? result.request : request));
+      }
+      setCodeEditor(null);
+      if (result.emailWarning) setError(`Code updated, but email failed: ${result.emailWarning}`);
+    } catch (updateError) {
+      setCodeEditor((current) => current && ({ ...current, sending: false, error: updateError.message }));
+    }
+  };
 
   const openDecision = (request, action) => setDialog({
     request,
@@ -408,18 +450,32 @@ export default function AffiliateRequests() {
                   <div className="approved-member-balance">
                     <strong>{balance.toLocaleString()}</strong><span>PRINTS</span>
                   </div>
+                  <div className="approved-member-code">
+                    <strong>{member.affiliate_code || '—'}</strong>
+                    <span>CODE</span>
+                  </div>
                   {member.affiliate_link || member.affiliate_code ? (
                     <div className="approved-member-link-actions">
                       <button type="button" onClick={() => navigator.clipboard.writeText(member.affiliate_link || member.affiliate_code)}>
-                        <Copy size={13} /> {member.affiliate_link ? 'Link' : member.affiliate_code}
+                        <Copy size={13} /> {member.affiliate_link ? 'Link' : 'Copy'}
                       </button>
                       {member.affiliate_link && (
                         <button type="button" onClick={() => openQrCode(member)} disabled={qrGenerating === member.id}>
                           <QrCode size={14} /> {qrGenerating === member.id ? 'Generating...' : 'QR'}
                         </button>
                       )}
+                      <button type="button" onClick={() => openCodeEditor(member)}>
+                        <Pencil size={13} /> Edit
+                      </button>
                     </div>
-                  ) : <span className="approved-member-no-link">No code/link</span>}
+                  ) : (
+                    <div className="approved-member-link-actions">
+                      <span className="approved-member-no-link">No code/link</span>
+                      <button type="button" onClick={() => openCodeEditor(member)}>
+                        <Pencil size={13} /> Add code
+                      </button>
+                    </div>
+                  )}
                   <button
                     type="button"
                     onClick={() => {
@@ -609,26 +665,32 @@ export default function AffiliateRequests() {
                         <p>{request.decision_message}</p>
                       </div>
                     )}
-                    {status === 'approved' && request.affiliate_code && (
+                    {status === 'approved' && (
                       <div className="affiliate-link">
                         <div>
                           <span>{request.affiliate_link ? 'Affiliate link' : 'Affiliate code'}</span>
-                          <strong>{request.affiliate_link || request.affiliate_code}</strong>
+                          <strong>{request.affiliate_link || request.affiliate_code || 'No code assigned'}</strong>
                         </div>
                         <div className="affiliate-link-actions">
-                          <button
-                            type="button"
-                            onClick={() => navigator.clipboard.writeText(request.affiliate_link || request.affiliate_code)}
-                          >
-                            {request.affiliate_link ? <ExternalLink size={15} /> : <Copy size={15} />}
-                            {request.affiliate_link ? 'Copy link' : 'Copy code'}
-                          </button>
+                          {(request.affiliate_link || request.affiliate_code) && (
+                            <button
+                              type="button"
+                              onClick={() => navigator.clipboard.writeText(request.affiliate_link || request.affiliate_code)}
+                            >
+                              {request.affiliate_link ? <ExternalLink size={15} /> : <Copy size={15} />}
+                              {request.affiliate_link ? 'Copy link' : 'Copy code'}
+                            </button>
+                          )}
                           {request.affiliate_link && (
                             <button type="button" onClick={() => openQrCode(request)} disabled={qrGenerating === request.id}>
                               <QrCode size={15} />
                               {qrGenerating === request.id ? 'Generating...' : 'QR code'}
                             </button>
                           )}
+                          <button type="button" onClick={() => openCodeEditor(request)}>
+                            <Pencil size={15} />
+                            {request.affiliate_code ? 'Edit code' : 'Add code'}
+                          </button>
                         </div>
                       </div>
                     )}
@@ -716,6 +778,64 @@ export default function AffiliateRequests() {
               <button type="button" className="approve" onClick={downloadQrCode}><Download size={16} /> Download PNG</button>
             </div>
           </div>
+        </div>
+      )}
+      {codeEditor && (
+        <div
+          className="affiliate-modal-backdrop"
+          role="presentation"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget && !codeEditor.sending) setCodeEditor(null);
+          }}
+        >
+          <form className="affiliate-modal" onSubmit={submitCodeEdit}>
+            <div className="affiliate-modal-title">
+              <div>
+                <span>Edit affiliate code</span>
+                <p>
+                  Change the public code for {codeEditor.request.name || codeEditor.request.email}.
+                  The affiliate link and QR code will update to match.
+                </p>
+              </div>
+              <button type="button" aria-label="Close" onClick={() => setCodeEditor(null)} disabled={codeEditor.sending}>
+                <X size={20} />
+              </button>
+            </div>
+            <div className="affiliate-requested-code">
+              <span>Current affiliate code</span>
+              <strong>{codeEditor.request.affiliate_code || 'None assigned'}</strong>
+            </div>
+            <label>
+              New affiliate code
+              <input
+                required
+                minLength={3}
+                maxLength={32}
+                pattern="[A-Za-z0-9_-]{3,32}"
+                value={codeEditor.affiliateCode}
+                onChange={(event) => setCodeEditor((current) => current && ({
+                  ...current,
+                  affiliateCode: event.target.value.toUpperCase().replace(/[^A-Z0-9_-]/g, ''),
+                }))}
+                placeholder="NEWCODE"
+              />
+            </label>
+            <label className="affiliate-notify-toggle">
+              <input
+                type="checkbox"
+                checked={codeEditor.notify}
+                onChange={(event) => setCodeEditor((current) => current && ({ ...current, notify: event.target.checked }))}
+              />
+              Email the affiliate their new code, link, and QR
+            </label>
+            {codeEditor.error && <div className="affiliate-error">{codeEditor.error}</div>}
+            <div className="affiliate-modal-actions">
+              <button type="button" className="cancel" onClick={() => setCodeEditor(null)} disabled={codeEditor.sending}>Cancel</button>
+              <button type="submit" className="approve" disabled={codeEditor.sending || !codeEditor.affiliateCode.trim()}>
+                {codeEditor.sending ? 'Saving...' : 'Save new code'}
+              </button>
+            </div>
+          </form>
         </div>
       )}
       {dialog && (
