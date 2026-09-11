@@ -8,24 +8,25 @@
     "upscale:server": "node server/upscale-server.js",
     "build": "vite build",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "worker:order-pdfs": "node scripts/generate-order-pdfs.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.86.0",
     "file-saver": "^2.0.5",
     "jspdf": "^3.0.4",
     "jszip": "^3.10.1",
-    "qrcode": "^1.5.4",
     "lucide-react": "^0.560.0",
-     "pdf-lib": "^1.17.1",
+    "pdf-lib": "^1.17.1",
+    "qrcode": "^1.5.4",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
+    "sharp": "^0.34.3",
     "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.1",
     "@tailwindcss/postcss": "^4.1.17",
-    "jszip": "^3.10.1",
     "@tailwindcss/vite": "^4.1.17",
     "@types/react": "^19.2.5",
     "@types/react-dom": "^19.2.3",
@@ -35,6 +36,7 @@
     "eslint-plugin-react-hooks": "^7.0.1",
     "eslint-plugin-react-refresh": "^0.4.24",
     "globals": "^16.5.0",
+    "jszip": "^3.10.1",
     "postcss": "^8.5.6",
     "tailwindcss": "^4.1.17",
     "vite": "^7.2.4"
