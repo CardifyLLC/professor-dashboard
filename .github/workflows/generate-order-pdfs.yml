@@ -1,0 +1,44 @@
+name: Generate Order PDFs
+
+on:
+  workflow_dispatch:
+    inputs:
+      max_orders:
+        description: Maximum orders to process in this run
+        required: false
+        default: '3'
+  schedule:
+    - cron: '*/5 * * * *'
+
+concurrency:
+  group: order-pdf-worker
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      MAX_ORDERS: ${{ inputs.max_orders || '3' }}
+      MAX_ATTEMPTS: '5'
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate queued order PDFs
+        run: npm run worker:order-pdfs
+
