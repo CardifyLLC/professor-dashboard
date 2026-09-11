@@ -247,14 +247,27 @@ const backfillMissingJobs = async () => {
 };
 
 const findJobs = async () => {
+  // Follow order creation time, not job update time. Backfilled generation rows
+  // can share nearly identical timestamps, so ordering the jobs themselves does
+  // not reliably prioritize the newest customer orders.
+  const { data: recentOrders, error: ordersError } = await supabase.from('orders')
+    .select('id, created_at').ilike('status', 'paid')
+    .order('created_at', { ascending: false }).limit(1000);
+  if (ordersError) throw ordersError;
+  if (!recentOrders?.length) return [];
+  const recentIds = recentOrders.map(order => order.id);
   const { data, error } = await supabase.from('order_pdf_generations')
-    .select('*').neq('status', 'completed').lt('attempt_count', MAX_ATTEMPTS + 1)
-    .order('updated_at', { ascending: true }).limit(100);
+    .select('*').in('order_id', recentIds)
+    .neq('status', 'completed').lt('attempt_count', MAX_ATTEMPTS + 1);
   if (error) throw error;
+  const jobsByOrderId = new Map((data || []).map(job => [job.order_id, job]));
   const cutoff = Date.now() - STALE_MS;
-  return (data || []).filter(job =>
-    job.status === 'failed' || !job.started_at || new Date(job.started_at).getTime() < cutoff || Number(job.processed_cards || 0) === 0
-  ).slice(0, MAX_ORDERS);
+  return recentIds
+    .map(orderId => jobsByOrderId.get(orderId))
+    .filter(job => job && (
+      job.status === 'failed' || !job.started_at || new Date(job.started_at).getTime() < cutoff || Number(job.processed_cards || 0) === 0
+    ))
+    .slice(0, MAX_ORDERS);
 };
 
 const processJob = async job => {
