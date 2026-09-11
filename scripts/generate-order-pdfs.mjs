@@ -4,6 +4,8 @@ import sharp from 'sharp';
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+const GITHUB_WORKFLOW_TOKEN = process.env.GITHUB_WORKFLOW_TOKEN;
+const GITHUB_REPOSITORY_NAME = process.env.GITHUB_REPOSITORY_NAME;
 const MAX_ORDERS = Math.max(1, Number.parseInt(process.env.MAX_ORDERS || '3', 10) || 3);
 const MAX_ATTEMPTS = Math.max(1, Number.parseInt(process.env.MAX_ATTEMPTS || '5', 10) || 5);
 const STALE_MS = 30 * 60 * 1000;
@@ -304,7 +306,28 @@ const processJob = async job => {
   }
 };
 
+const dispatchContinuation = async () => {
+  if (!GITHUB_WORKFLOW_TOKEN || !GITHUB_REPOSITORY_NAME) {
+    console.log('Continuation dispatch is unavailable outside GitHub Actions.');
+    return;
+  }
+  const response = await fetch(`https://api.github.com/repos/${GITHUB_REPOSITORY_NAME}/dispatches`, {
+    method: 'POST',
+    headers: {
+      Accept: 'application/vnd.github+json',
+      Authorization: `Bearer ${GITHUB_WORKFLOW_TOKEN}`,
+      'Content-Type': 'application/json',
+      'X-GitHub-Api-Version': '2022-11-28',
+    },
+    body: JSON.stringify({ event_type: 'order_pdf_continue' }),
+  });
+  if (!response.ok) throw new Error(`Could not dispatch the next PDF batch (HTTP ${response.status}).`);
+  console.log('Queued the next GitHub Actions batch.');
+};
+
 await backfillMissingJobs();
 const jobs = await findJobs();
 console.log(`Found ${jobs.length} PDF job(s) for this run.`);
 for (const job of jobs) await processJob(job);
+const remainingJobs = await findJobs();
+if (remainingJobs.length) await dispatchContinuation();
