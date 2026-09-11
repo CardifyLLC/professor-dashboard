@@ -8,12 +8,12 @@ const MAX_ORDERS = Math.max(1, Number.parseInt(process.env.MAX_ORDERS || '3', 10
 const MAX_ATTEMPTS = Math.max(1, Number.parseInt(process.env.MAX_ATTEMPTS || '5', 10) || 5);
 const STALE_MS = 30 * 60 * 1000;
 const IMAGE_TIMEOUT_MS = 30_000;
-// 1,200 px across a 67 mm card is about 455 DPI. This remains comfortably
-// above normal print resolution while keeping large, unique-artwork orders
-// below common Supabase bucket object-size limits.
-const IMAGE_WIDTH = 1200;
-const IMAGE_QUALITY = 80;
-const TARGET_PDF_BYTES = 45 * 1024 * 1024;
+// Match BatcherPRO's locked canvas export: 67 x 92 mm at 1,200 DPI, encoded
+// with its quality-0.50 JPEG profile.
+const TARGET_DPI = 1200;
+const IMAGE_WIDTH = Math.ceil(67 / 25.4 * TARGET_DPI);
+const IMAGE_HEIGHT = Math.ceil(92 / 25.4 * TARGET_DPI);
+const IMAGE_QUALITY = 50;
 
 if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
   throw new Error('SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are required.');
@@ -130,7 +130,7 @@ const cardsFromOrder = order => {
   return cards;
 };
 
-const fetchImage = async (urls, imageWidth, imageQuality) => {
+const fetchImage = async urls => {
   let lastError;
   for (const url of urls) {
     try {
@@ -148,9 +148,9 @@ const fetchImage = async (urls, imageWidth, imageQuality) => {
         bytes = Buffer.from(await response.arrayBuffer());
       }
       return sharp(bytes)
-        .resize({ width: imageWidth })
+        .resize({ width: IMAGE_WIDTH, height: IMAGE_HEIGHT, fit: 'fill', kernel: sharp.kernel.lanczos3 })
         .flatten({ background: '#ffffff' })
-        .jpeg({ quality: imageQuality, mozjpeg: true })
+        .jpeg({ quality: IMAGE_QUALITY })
         .toBuffer();
     } catch (error) {
       lastError = error;
@@ -170,7 +170,7 @@ const drawRegistrationBar = (page, isBackPage) => {
   });
 };
 
-const generatePdf = async (order, cards, onProgress, imageWidth = IMAGE_WIDTH, imageQuality = IMAGE_QUALITY) => {
+const generatePdf = async (order, cards, onProgress) => {
   const pdf = await PDFDocument.create();
   const font = await pdf.embedFont(StandardFonts.Helvetica);
   const imageCache = new Map();
@@ -178,7 +178,7 @@ const generatePdf = async (order, cards, onProgress, imageWidth = IMAGE_WIDTH, i
 
   const embed = async urls => {
     const key = urls.join('|');
-    if (!imageCache.has(key)) imageCache.set(key, await pdf.embedJpg(await fetchImage(urls, imageWidth, imageQuality)));
+    if (!imageCache.has(key)) imageCache.set(key, await pdf.embedJpg(await fetchImage(urls)));
     return imageCache.get(key);
   };
 
@@ -285,18 +285,8 @@ const processJob = async job => {
     await updateJob(order.id, { total_cards: cards.length, processed_cards: 0, total_parts: 1, completed_parts: 0 });
     console.log(`Generating ${order.id}: ${cards.length} card(s).`);
     const updateProgress = async processed_cards => updateJob(order.id, { processed_cards });
-    const profiles = [
-      { width: IMAGE_WIDTH, quality: IMAGE_QUALITY },
-      { width: 900, quality: 72 },
-      { width: 720, quality: 65 },
-    ];
-    let bytes;
-    for (const profile of profiles) {
-      bytes = await generatePdf(order, cards, updateProgress, profile.width, profile.quality);
-      console.log(`Generated ${(bytes.length / 1024 / 1024).toFixed(1)} MB at ${profile.width}px/q${profile.quality}.`);
-      if (bytes.length <= TARGET_PDF_BYTES) break;
-      console.log('PDF is too large for a common Supabase object limit; regenerating with a smaller print profile.');
-    }
+    const bytes = await generatePdf(order, cards, updateProgress);
+    console.log(`Generated ${(bytes.length / 1024 / 1024).toFixed(1)} MB at ${TARGET_DPI} DPI/q${IMAGE_QUALITY}.`);
     const storagePath = `${order.id}/print-sheet.pdf`;
     const { error: uploadError } = await supabase.storage.from('order-pdfs')
       .upload(storagePath, bytes, { contentType: 'application/pdf', upsert: true });
