@@ -7,15 +7,17 @@ on:
         description: Maximum orders to process in this run
         required: false
         default: '3'
+  repository_dispatch:
+    types: [order_pdf_requested, order_pdf_continue]
   schedule:
-    - cron: '3,13,23,33,43,53 * * * *'
+    - cron: '3-58/5 * * * *'
 
 concurrency:
   group: order-pdf-worker
   cancel-in-progress: false
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   generate:
@@ -26,6 +28,8 @@ jobs:
       SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
       MAX_ORDERS: ${{ inputs.max_orders || '3' }}
       MAX_ATTEMPTS: '5'
+      GITHUB_WORKFLOW_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GITHUB_REPOSITORY_NAME: ${{ github.repository }}
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
