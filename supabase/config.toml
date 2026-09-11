@@ -24,3 +24,6 @@ verify_jwt = false
 
 [functions.generate-order-pdf]
 verify_jwt = false
+
+[functions.trigger-order-pdf-workflow]
+verify_jwt = false
