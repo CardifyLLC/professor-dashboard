@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { TriangleAlert } from 'lucide-react';
-import { awardCashPurchaseReward, fetchOrderPdfGenerations, hasUploadedXml, isXmlOrder } from '../services/orderService';
+import { Download, TriangleAlert } from 'lucide-react';
+import { saveAs } from 'file-saver';
+import { awardCashPurchaseReward, createOrderPdfDownloadUrls, fetchCompletedOrderPdfsByDate, fetchOrderPdfGenerations, hasUploadedXml, isXmlOrder } from '../services/orderService';
 
 const statusTabs = [
     { value: 'all', label: 'All' },
@@ -29,6 +30,8 @@ const OrderList = ({ orders, onSelectOrder, page, setPage, totalCount, pageSize,
     const [rewardingOrderId, setRewardingOrderId] = useState(null);
     const [rewardMessages, setRewardMessages] = useState({});
     const [pdfGenerations, setPdfGenerations] = useState({});
+    const [pdfDownloadDate, setPdfDownloadDate] = useState(() => new Date().toLocaleDateString('en-CA'));
+    const [bulkPdfDownload, setBulkPdfDownload] = useState({ running: false, completed: 0, total: 0, message: '' });
 
     // Clear selection whenever the visible orders change (page change, filter, search, etc.)
     useEffect(() => {
@@ -129,6 +132,50 @@ const OrderList = ({ orders, onSelectOrder, page, setPage, totalCount, pageSize,
         }
     };
 
+    const handleDownloadPdfsByDate = async () => {
+        if (!pdfDownloadDate || bulkPdfDownload.running) return;
+        setBulkPdfDownload({ running: true, completed: 0, total: 0, message: 'Finding completed PDFs...' });
+        try {
+            const generations = await fetchCompletedOrderPdfsByDate(pdfDownloadDate);
+            const files = generations.flatMap(generation => {
+                const paths = Array.isArray(generation.storage_paths) && generation.storage_paths.length
+                    ? generation.storage_paths
+                    : generation.storage_path ? [generation.storage_path] : [];
+                return paths.map((path, index) => ({
+                    orderId: generation.order_id,
+                    path,
+                    part: index + 1,
+                    totalParts: paths.length,
+                }));
+            });
+            if (!files.length) {
+                setBulkPdfDownload({ running: false, completed: 0, total: 0, message: 'No completed PDFs found for this date.' });
+                return;
+            }
+
+            setBulkPdfDownload({ running: true, completed: 0, total: files.length, message: 'Creating secure download links...' });
+            const signedUrls = [];
+            for (let start = 0; start < files.length; start += 100) {
+                signedUrls.push(...await createOrderPdfDownloadUrls(files.slice(start, start + 100).map(file => file.path)));
+            }
+
+            for (let index = 0; index < files.length; index += 1) {
+                const response = await fetch(signedUrls[index]);
+                if (!response.ok) throw new Error(`Could not download PDF ${index + 1} (HTTP ${response.status}).`);
+                const blob = await response.blob();
+                const file = files[index];
+                const suffix = file.totalParts > 1 ? `-part-${file.part}-of-${file.totalParts}` : '';
+                saveAs(blob, `order-${file.orderId}${suffix}.pdf`);
+                setBulkPdfDownload({ running: true, completed: index + 1, total: files.length, message: `Downloading ${index + 1} of ${files.length}...` });
+                await new Promise(resolve => window.setTimeout(resolve, 300));
+            }
+            setBulkPdfDownload({ running: false, completed: files.length, total: files.length, message: `Downloaded ${files.length} PDF file${files.length === 1 ? '' : 's'}.` });
+        } catch (error) {
+            console.error('Could not download PDFs by date:', error);
+            setBulkPdfDownload(current => ({ ...current, running: false, message: error.message || 'PDF download failed.' }));
+        }
+    };
+
     const handleGrantCashReward = async (event, order) => {
         event.stopPropagation();
         if (!window.confirm(`Grant another 5% cash-purchase PRINTS reward for order #${order.id.slice(0, 8)}? Every confirmed click adds a new wallet credit.`)) return;
@@ -222,8 +269,29 @@ const OrderList = ({ orders, onSelectOrder, page, setPage, totalCount, pageSize,
                 </div>
             )}
 
-            <div className="table-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px' }}>
+            <div className="table-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '14px', flexWrap: 'wrap', padding: '10px' }}>
                 <span>Total Orders: {totalCount}</span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                    <label htmlFor="pdf-download-date" style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>PDF completion date</label>
+                    <input
+                        id="pdf-download-date"
+                        type="date"
+                        value={pdfDownloadDate}
+                        onChange={event => setPdfDownloadDate(event.target.value)}
+                        disabled={bulkPdfDownload.running}
+                        style={{ padding: '7px 9px', borderRadius: '7px', border: '1px solid var(--border-color)', background: 'var(--bg-secondary)', color: 'var(--text-primary)' }}
+                    />
+                    <button
+                        type="button"
+                        onClick={handleDownloadPdfsByDate}
+                        disabled={!pdfDownloadDate || bulkPdfDownload.running}
+                        style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', padding: '7px 11px', border: 0, borderRadius: '7px', background: '#10b981', color: '#fff', fontWeight: 700, cursor: bulkPdfDownload.running ? 'not-allowed' : 'pointer', opacity: bulkPdfDownload.running ? 0.7 : 1 }}
+                    >
+                        <Download size={15} />
+                        {bulkPdfDownload.running ? `${bulkPdfDownload.completed}/${bulkPdfDownload.total || '...'}` : 'Download day PDFs'}
+                    </button>
+                    {bulkPdfDownload.message && <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{bulkPdfDownload.message}</span>}
+                </div>
                 <div className="pagination-controls" style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
                     <button
                         disabled={page === 1}
