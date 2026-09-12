@@ -40,7 +40,12 @@ const REG_MARK_WIDTH = mmToPt(3.3);
 const REG_MARK_HEIGHT = mmToPt(60);
 const COLS = 6;
 const CARDS_PER_SHEET = 18;
-const MAX_SHEETS_PER_FILE = 20;
+// Supabase rejects an upload when a single PDF object exceeds the bucket's
+// size limit. At 1,200 DPI, image complexity makes byte size vary widely, so
+// even a 190-card/22-page PDF can be too large. Keep each part to four duplex
+// sheets (8 PDF pages / 72 cards) to retain BatcherPRO quality while keeping
+// individual objects safely smaller. This is below the printer's 40-page max.
+const MAX_SHEETS_PER_FILE = 4;
 const MAX_CARDS_PER_FILE = CARDS_PER_SHEET * MAX_SHEETS_PER_FILE;
 
 const asArray = value => {
