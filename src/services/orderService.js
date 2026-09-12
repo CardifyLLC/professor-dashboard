@@ -163,6 +163,34 @@ export const createOrderPdfDownloadUrls = async (storagePaths) => {
     return urls;
 };
 
+/** Returns every completed PDF storage path for a selected completion date. */
+export const fetchCompletedOrderPdfsByDate = async (date) => {
+    if (!date) return [];
+    const start = new Date(`${date}T00:00:00`);
+    const end = new Date(start);
+    end.setDate(end.getDate() + 1);
+
+    const pageSize = 1000;
+    let from = 0;
+    const results = [];
+    while (true) {
+        const { data, error } = await ordersClient
+            .from('order_pdf_generations')
+            .select('order_id, storage_path, storage_paths, completed_at')
+            .eq('status', 'completed')
+            .gte('completed_at', start.toISOString())
+            .lt('completed_at', end.toISOString())
+            .order('completed_at', { ascending: true })
+            .range(from, from + pageSize - 1);
+        if (error) throw error;
+        const page = data || [];
+        results.push(...page);
+        if (page.length < pageSize) break;
+        from += pageSize;
+    }
+    return results;
+};
+
 // Backward-compatible exports for deployments that still contain the previous
 // Dashboard bundle. The current Dashboard no longer renders the bulk button.
 export const fetchNewOrderPdfs = async () => {
