@@ -40,6 +40,8 @@ const REG_MARK_WIDTH = mmToPt(3.3);
 const REG_MARK_HEIGHT = mmToPt(60);
 const COLS = 6;
 const CARDS_PER_SHEET = 18;
+const MAX_SHEETS_PER_FILE = 20;
+const MAX_CARDS_PER_FILE = CARDS_PER_SHEET * MAX_SHEETS_PER_FILE;
 
 const asArray = value => {
   if (Array.isArray(value)) return value;
@@ -284,18 +286,37 @@ const processJob = async job => {
     if (String(order.status || '').toLowerCase() !== 'paid') throw new Error('Order is no longer paid.');
     const cards = cardsFromOrder(order);
     if (!cards.length) throw new Error('Order has no printable cards.');
-    await updateJob(order.id, { total_cards: cards.length, processed_cards: 0, total_parts: 1, completed_parts: 0 });
-    console.log(`Generating ${order.id}: ${cards.length} card(s).`);
-    const updateProgress = async processed_cards => updateJob(order.id, { processed_cards });
-    const bytes = await generatePdf(order, cards, updateProgress);
-    console.log(`Generated ${(bytes.length / 1024 / 1024).toFixed(1)} MB at ${TARGET_DPI} DPI/q${IMAGE_QUALITY}.`);
-    const storagePath = `${order.id}/print-sheet.pdf`;
-    const { error: uploadError } = await supabase.storage.from('order-pdfs')
-      .upload(storagePath, bytes, { contentType: 'application/pdf', upsert: true });
-    if (uploadError) throw uploadError;
+    const totalParts = Math.ceil(cards.length / MAX_CARDS_PER_FILE);
+    const storagePaths = [];
     await updateJob(order.id, {
-      status: 'completed', storage_path: storagePath, storage_paths: [storagePath],
-      processed_cards: cards.length, total_cards: cards.length, total_parts: 1, completed_parts: 1,
+      total_cards: cards.length, processed_cards: 0, total_parts: totalParts,
+      completed_parts: 0, storage_path: null, storage_paths: [],
+    });
+    console.log(`Generating ${order.id}: ${cards.length} card(s) in ${totalParts} file part(s).`);
+    for (let partIndex = 0; partIndex < totalParts; partIndex += 1) {
+      const partStart = partIndex * MAX_CARDS_PER_FILE;
+      const partCards = cards.slice(partStart, partStart + MAX_CARDS_PER_FILE);
+      const updateProgress = async partProcessed => updateJob(order.id, {
+        processed_cards: Math.min(cards.length, partStart + partProcessed),
+      });
+      const bytes = await generatePdf(order, partCards, updateProgress);
+      console.log(`Generated part ${partIndex + 1}/${totalParts}: ${(bytes.length / 1024 / 1024).toFixed(1)} MB at ${TARGET_DPI} DPI/q${IMAGE_QUALITY}.`);
+      const storagePath = totalParts === 1
+        ? `${order.id}/print-sheet.pdf`
+        : `${order.id}/order-${order.id}-part-${partIndex + 1}-of-${totalParts}.pdf`;
+      const { error: uploadError } = await supabase.storage.from('order-pdfs')
+        .upload(storagePath, bytes, { contentType: 'application/pdf', upsert: true });
+      if (uploadError) throw uploadError;
+      storagePaths.push(storagePath);
+      await updateJob(order.id, {
+        storage_path: storagePaths[0], storage_paths: storagePaths,
+        processed_cards: Math.min(cards.length, partStart + partCards.length),
+        completed_parts: partIndex + 1,
+      });
+    }
+    await updateJob(order.id, {
+      status: 'completed', storage_path: storagePaths[0], storage_paths: storagePaths,
+      processed_cards: cards.length, total_cards: cards.length, total_parts: totalParts, completed_parts: totalParts,
       completed_at: new Date().toISOString(), error_message: null,
     });
     console.log(`Completed ${order.id}.`);
