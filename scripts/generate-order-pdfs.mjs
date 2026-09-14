@@ -19,6 +19,9 @@ const IMAGE_WIDTH = Math.ceil(67 / 25.4 * TARGET_DPI);
 const IMAGE_HEIGHT = Math.ceil(92 / 25.4 * TARGET_DPI);
 const IMAGE_QUALITY = 50;
 
+class MissingImageCandidateError extends Error {}
+class MissingOrderImageError extends Error {}
+
 if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
   throw new Error('SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are required.');
 }
@@ -148,32 +151,46 @@ const cardsFromOrder = order => {
 
 const fetchImage = async urls => {
   let lastError;
+  let lastMissingError;
+  let sawTemporaryFailure = false;
   for (const url of urls) {
     try {
       let bytes;
       if (url.startsWith('data:')) {
         const match = url.match(/^data:[^;,]+;base64,(.+)$/s);
-        if (!match) throw new Error('Unsupported inline image.');
+        if (!match) throw new MissingImageCandidateError('invalid inline image data');
         bytes = Buffer.from(match[1], 'base64');
       } else {
         const response = await fetch(url, {
           headers: { apikey: SUPABASE_SERVICE_ROLE_KEY, Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}` },
           signal: AbortSignal.timeout(IMAGE_TIMEOUT_MS),
         });
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        if (response.status === 404 || response.status === 410) {
+          throw new MissingImageCandidateError(`missing object (HTTP ${response.status}) from ${url}`);
+        }
+        if (!response.ok) throw new Error(`temporary download failure (HTTP ${response.status}) from ${url}`);
         bytes = Buffer.from(await response.arrayBuffer());
       }
-      if (!bytes.length) throw new Error(`empty response from ${url}`);
-      return sharp(bytes)
-        .resize({ width: IMAGE_WIDTH, height: IMAGE_HEIGHT, fit: 'fill', kernel: sharp.kernel.lanczos3 })
-        .flatten({ background: '#ffffff' })
-        .jpeg({ quality: IMAGE_QUALITY })
-        .toBuffer();
+      if (!bytes.length) throw new MissingImageCandidateError(`empty image object from ${url}`);
+      try {
+        return await sharp(bytes)
+          .resize({ width: IMAGE_WIDTH, height: IMAGE_HEIGHT, fit: 'fill', kernel: sharp.kernel.lanczos3 })
+          .flatten({ background: '#ffffff' })
+          .jpeg({ quality: IMAGE_QUALITY })
+          .toBuffer();
+      } catch (error) {
+        throw new MissingImageCandidateError(`invalid or corrupted image from ${url}: ${error.message}`);
+      }
     } catch (error) {
       lastError = error;
+      if (error instanceof MissingImageCandidateError) lastMissingError = error;
+      else sawTemporaryFailure = true;
     }
   }
-  throw new Error(`Could not download an order image after trying ${urls.length} source(s): ${lastError?.message || 'no usable URL'}`);
+  if (!sawTemporaryFailure && lastMissingError) {
+    throw new MissingOrderImageError(`Order card image is missing or invalid after checking ${urls.length} source(s): ${lastMissingError.message}`);
+  }
+  throw new Error(`Could not prepare an order image because of a temporary download or processing failure after trying ${urls.length} source(s): ${lastError?.message || 'no usable URL'}`);
 };
 
 const drawRegistrationBar = (page, isBackPage) => {
@@ -288,7 +305,7 @@ const findJobs = async () => {
   const recentIds = recentOrders.map(order => order.id);
   const { data, error } = await supabase.from('order_pdf_generations')
     .select('*').in('order_id', recentIds)
-    .neq('status', 'completed').lt('attempt_count', MAX_ATTEMPTS + 1);
+    .neq('status', 'completed').lt('attempt_count', MAX_ATTEMPTS);
   if (error) throw error;
   const jobsByOrderId = new Map((data || []).map(job => [job.order_id, job]));
   const cutoff = Date.now() - STALE_MS;
@@ -357,17 +374,19 @@ const processJob = async job => {
     await updateJob(order.id, {
       status: 'completed', storage_path: storagePaths[0], storage_paths: storagePaths,
       processed_cards: cards.length, total_cards: cards.length, total_parts: totalParts, completed_parts: totalParts,
-      completed_at: new Date().toISOString(), error_message: null,
+      completed_at: new Date().toISOString(), error_message: null, repair_required: false,
     });
     console.log(`Completed ${order.id}.`);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    const repairRequired = message.includes('Could not download an order image');
+    const repairRequired = error instanceof MissingOrderImageError;
+    const nextAttemptCount = Number(job.attempt_count || 0) + 1;
+    const finalAttemptFailed = nextAttemptCount >= MAX_ATTEMPTS;
     await updateJob(job.order_id, {
       status: 'failed', error_message: message.slice(0, 1000),
-      ...(repairRequired ? { repair_required: true } : {}),
+      repair_required: repairRequired && finalAttemptFailed,
     });
-    if (repairRequired) {
+    if (repairRequired && finalAttemptFailed) {
       try {
         await notifyCustomerRepairRequired(job.order_id);
       } catch (notificationError) {
