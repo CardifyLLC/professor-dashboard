@@ -6,6 +6,8 @@ const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const GITHUB_WORKFLOW_TOKEN = process.env.GITHUB_WORKFLOW_TOKEN;
 const GITHUB_REPOSITORY_NAME = process.env.GITHUB_REPOSITORY_NAME;
+const CUSTOMER_APP_URL = (process.env.CUSTOMER_APP_URL || 'https://tcgplaytest.com').replace(/\/$/, '');
+const ORDER_PDF_WEBHOOK_SECRET = process.env.ORDER_PDF_WEBHOOK_SECRET;
 const MAX_ORDERS = Math.max(1, Number.parseInt(process.env.MAX_ORDERS || '3', 10) || 3);
 const MAX_ATTEMPTS = Math.max(1, Number.parseInt(process.env.MAX_ATTEMPTS || '5', 10) || 5);
 const STALE_MS = 30 * 60 * 1000;
@@ -243,6 +245,19 @@ const updateJob = async (orderId, changes) => {
   if (error) throw error;
 };
 
+const notifyCustomerRepairRequired = async orderId => {
+  if (!ORDER_PDF_WEBHOOK_SECRET) {
+    console.warn('Customer repair email skipped: ORDER_PDF_WEBHOOK_SECRET is not configured.');
+    return;
+  }
+  const response = await fetch(`${CUSTOMER_APP_URL}/api/internal/order-image-failure`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'x-webhook-secret': ORDER_PDF_WEBHOOK_SECRET },
+    body: JSON.stringify({ orderId }),
+  });
+  if (!response.ok) throw new Error(`Customer repair notification returned HTTP ${response.status}.`);
+};
+
 const backfillMissingJobs = async () => {
   const { data: paidOrders, error: ordersError } = await supabase
     .from('orders').select('id').ilike('status', 'paid').order('created_at', { ascending: true }).limit(1000);
@@ -333,7 +348,18 @@ const processJob = async job => {
     console.log(`Completed ${order.id}.`);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    await updateJob(job.order_id, { status: 'failed', error_message: message.slice(0, 1000) });
+    const repairRequired = message.includes('Could not download an order image');
+    await updateJob(job.order_id, {
+      status: 'failed', error_message: message.slice(0, 1000),
+      ...(repairRequired ? { repair_required: true } : {}),
+    });
+    if (repairRequired) {
+      try {
+        await notifyCustomerRepairRequired(job.order_id);
+      } catch (notificationError) {
+        console.error(`Could not notify customer for ${job.order_id}: ${notificationError.message}`);
+      }
+    }
     console.error(`Failed ${job.order_id}: ${message}`);
   }
 };
