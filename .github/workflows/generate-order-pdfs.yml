@@ -14,7 +14,7 @@ permissions:
   packages: write
 
 env:
-  IMAGE_NAME: ghcr.io/cardifyllc/testing123-prof/tcg-upscaler-worker
+  IMAGE_NAME: ghcr.io/cardifyllc/professor-dashboard/tcg-upscaler-worker
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
