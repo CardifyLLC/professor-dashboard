@@ -301,6 +301,20 @@ const findJobs = async () => {
 };
 
 const processJob = async job => {
+  // A job may have completed after findJobs() read the queue (for example, if
+  // another worker finished it). Re-check immediately before doing any work so
+  // an existing completed PDF is never regenerated or overwritten.
+  const { data: currentJob, error: currentJobError } = await supabase
+    .from('order_pdf_generations')
+    .select('status')
+    .eq('order_id', job.order_id)
+    .maybeSingle();
+  if (currentJobError) throw currentJobError;
+  if (!currentJob || currentJob.status === 'completed') {
+    console.log(`Skipping ${job.order_id}: PDF is already completed.`);
+    return;
+  }
+
   const startedAt = new Date().toISOString();
   await updateJob(job.order_id, {
     status: 'processing', error_message: null, started_at: startedAt,
