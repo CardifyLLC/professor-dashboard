@@ -90,6 +90,10 @@ const imageCandidates = (value) => {
   ];
 };
 
+const imageCandidatesFromValues = values => [...new Set(
+  values.flatMap(value => imageCandidates(value)),
+)];
+
 const isBackPath = value => {
   const path = String(value || '').toLowerCase().split('?')[0];
   return /(?:^|[\/_-])back\.(?:png|jpe?g|webp|gif|avif)$/.test(path);
@@ -106,16 +110,18 @@ const cardsFromOrder = order => {
 
   for (const rawCard of structured) {
     const card = asObject(rawCard);
-    const front = proMode
-      ? card.originalFrontUrl || card.originalFront || card.frontUrl || card.front
-      : card.frontUrl || card.front || card.originalFrontUrl || card.originalFront;
-    const back = proMode
-      ? card.originalBackUrl || card.originalBack || card.backUrl || card.back
-      : card.backUrl || card.back || card.originalBackUrl || card.originalBack;
-    if (!front) continue;
+    const frontValues = proMode
+      ? [card.originalFrontUrl, card.originalFront, card.frontUrl, card.front]
+      : [card.frontUrl, card.front, card.originalFrontUrl, card.originalFront];
+    const backValues = proMode
+      ? [card.originalBackUrl, card.originalBack, card.backUrl, card.back]
+      : [card.backUrl, card.back, card.originalBackUrl, card.originalBack];
+    const front = imageCandidatesFromValues(frontValues);
+    const back = imageCandidatesFromValues(backValues);
+    if (!front.length) continue;
     const copies = positiveInteger(card.quantity, 1) * deckQuantity;
     for (let copy = 0; copy < copies; copy += 1) {
-      cards.push({ front: imageCandidates(front), back: imageCandidates(back) });
+      cards.push({ front, back });
     }
   }
   if (cards.length) return cards;
@@ -155,6 +161,7 @@ const fetchImage = async urls => {
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         bytes = Buffer.from(await response.arrayBuffer());
       }
+      if (!bytes.length) throw new Error(`empty response from ${url}`);
       return sharp(bytes)
         .resize({ width: IMAGE_WIDTH, height: IMAGE_HEIGHT, fit: 'fill', kernel: sharp.kernel.lanczos3 })
         .flatten({ background: '#ffffff' })
@@ -164,7 +171,7 @@ const fetchImage = async urls => {
       lastError = error;
     }
   }
-  throw new Error(`Could not download an order image: ${lastError?.message || 'no usable URL'}`);
+  throw new Error(`Could not download an order image after trying ${urls.length} source(s): ${lastError?.message || 'no usable URL'}`);
 };
 
 const drawRegistrationBar = (page, isBackPage) => {
