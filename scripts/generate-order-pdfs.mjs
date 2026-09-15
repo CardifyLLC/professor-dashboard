@@ -45,11 +45,11 @@ const REG_MARK_WIDTH = mmToPt(3.3);
 const REG_MARK_HEIGHT = mmToPt(60);
 const COLS = 6;
 const CARDS_PER_SHEET = 18;
-// The printer requires large orders in parts of no more than 20 duplex sheets:
-// 20 front pages + 20 back pages = 40 PDF pages (360 cards) per file.
-// The order-pdfs bucket is configured with a 500 MB object limit for these
-// full-quality 1,200 DPI parts.
-const MAX_SHEETS_PER_FILE = 20;
+const CUSTOMER_NAME_FONT_SIZE = 12;
+// Supabase accepts at most 500 MB per object. A real 20-sheet/40-page part
+// reached 518.3 MB at the required 1,200 DPI/q50 quality, so use at most 18
+// duplex sheets (36 PDF pages / 324 cards) and retain some upload headroom.
+const MAX_SHEETS_PER_FILE = 18;
 const MAX_CARDS_PER_FILE = CARDS_PER_SHEET * MAX_SHEETS_PER_FILE;
 
 const asArray = value => {
@@ -221,7 +221,11 @@ const generatePdf = async (order, cards, onProgress) => {
     const frontPage = pdf.addPage([PAGE_WIDTH, PAGE_HEIGHT]);
     drawRegistrationBar(frontPage, false);
     frontPage.drawText(String(order.customer_name || 'Unknown Customer'), {
-      x: MARGIN_LEFT, y: PAGE_HEIGHT - mmToPt(7), size: 7, font, color: rgb(0, 0, 0),
+      x: MARGIN_LEFT,
+      y: PAGE_HEIGHT - mmToPt(13.5),
+      size: CUSTOMER_NAME_FONT_SIZE,
+      font,
+      color: rgb(0, 0, 0),
     });
     for (let index = 0; index < sheet.length; index += 1) {
       const col = index % COLS;
