@@ -272,7 +272,7 @@ const OrderList = ({ orders, onSelectOrder, page, setPage, totalCount, pageSize,
             <div className="table-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '14px', flexWrap: 'wrap', padding: '10px' }}>
                 <span>Total Orders: {totalCount}</span>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-                    <label htmlFor="pdf-download-date" style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>PDF completion date</label>
+                    <label htmlFor="pdf-download-date" style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Order date</label>
                     <input
                         id="pdf-download-date"
                         type="date"
