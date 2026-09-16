@@ -163,7 +163,7 @@ export const createOrderPdfDownloadUrls = async (storagePaths) => {
     return urls;
 };
 
-/** Returns every completed PDF storage path for a selected completion date. */
+/** Returns completed PDFs for orders placed on the selected local calendar date. */
 export const fetchCompletedOrderPdfsByDate = async (date) => {
     if (!date) return [];
     const start = new Date(`${date}T00:00:00`);
@@ -172,21 +172,35 @@ export const fetchCompletedOrderPdfsByDate = async (date) => {
 
     const pageSize = 1000;
     let from = 0;
-    const results = [];
+    const orderIds = [];
     while (true) {
         const { data, error } = await ordersClient
-            .from('order_pdf_generations')
-            .select('order_id, storage_path, storage_paths, completed_at')
-            .eq('status', 'completed')
-            .gte('completed_at', start.toISOString())
-            .lt('completed_at', end.toISOString())
-            .order('completed_at', { ascending: true })
+            .from('orders')
+            .select('id')
+            .gte('created_at', start.toISOString())
+            .lt('created_at', end.toISOString())
+            .order('created_at', { ascending: true })
             .range(from, from + pageSize - 1);
         if (error) throw error;
         const page = data || [];
-        results.push(...page);
+        orderIds.push(...page.map(order => order.id));
         if (page.length < pageSize) break;
         from += pageSize;
+    }
+
+    if (!orderIds.length) return [];
+
+    const results = [];
+    // Keep each PostgREST URL reasonably small when a day contains many orders.
+    for (let index = 0; index < orderIds.length; index += 200) {
+        const { data, error } = await ordersClient
+            .from('order_pdf_generations')
+            .select('order_id, storage_path, storage_paths, completed_at')
+            .in('order_id', orderIds.slice(index, index + 200))
+            .eq('status', 'completed')
+            .order('completed_at', { ascending: true });
+        if (error) throw error;
+        results.push(...(data || []));
     }
     return results;
 };
