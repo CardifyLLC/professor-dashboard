@@ -1,6 +1,44 @@
 import { supabase, supabaseAdmin, getAdminAuthHeaders } from './supabaseClient';
 
 const ordersClient = supabaseAdmin;
+const ORDER_TIME_ZONE = 'America/Los_Angeles';
+
+const pacificDateTimeFormatter = new Intl.DateTimeFormat('en-US', {
+    timeZone: ORDER_TIME_ZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hourCycle: 'h23',
+});
+
+const getDateTimeParts = (value) => Object.fromEntries(
+    pacificDateTimeFormatter.formatToParts(value)
+        .filter(part => part.type !== 'literal')
+        .map(part => [part.type, Number(part.value)])
+);
+
+const pacificMidnightToUtc = (date) => {
+    const [year, month, day] = date.split('-').map(Number);
+    const targetAsUtc = Date.UTC(year, month - 1, day);
+    const rendered = getDateTimeParts(new Date(targetAsUtc));
+    const renderedAsUtc = Date.UTC(
+        rendered.year,
+        rendered.month - 1,
+        rendered.day,
+        rendered.hour,
+        rendered.minute,
+        rendered.second
+    );
+    return new Date(targetAsUtc - (renderedAsUtc - targetAsUtc));
+};
+
+export const getCurrentPacificDate = () => {
+    const { year, month, day } = getDateTimeParts(new Date());
+    return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+};
 
 export const awardCashPurchaseReward = async (orderId) => {
     const headers = await getAdminAuthHeaders();
@@ -163,12 +201,13 @@ export const createOrderPdfDownloadUrls = async (storagePaths) => {
     return urls;
 };
 
-/** Returns completed PDFs for orders placed on the selected local calendar date. */
+/** Returns completed PDFs for orders placed on the selected Pacific calendar date. */
 export const fetchCompletedOrderPdfsByDate = async (date) => {
     if (!date) return [];
-    const start = new Date(`${date}T00:00:00`);
-    const end = new Date(start);
-    end.setDate(end.getDate() + 1);
+    const start = pacificMidnightToUtc(date);
+    const [year, month, day] = date.split('-').map(Number);
+    const nextDate = new Date(Date.UTC(year, month - 1, day + 1)).toISOString().slice(0, 10);
+    const end = pacificMidnightToUtc(nextDate);
 
     const pageSize = 1000;
     let from = 0;
