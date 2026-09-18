@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Download, TriangleAlert } from 'lucide-react';
 import { saveAs } from 'file-saver';
-import { awardCashPurchaseReward, createOrderPdfDownloadUrls, fetchCompletedOrderPdfsByDate, fetchOrderPdfGenerations, hasUploadedXml, isXmlOrder } from '../services/orderService';
+import { awardCashPurchaseReward, createOrderPdfDownloadUrls, fetchCompletedOrderPdfsByDate, fetchOrderPdfGenerations, getCurrentPacificDate, hasUploadedXml, isXmlOrder } from '../services/orderService';
 
 const statusTabs = [
     { value: 'all', label: 'All' },
@@ -30,7 +30,7 @@ const OrderList = ({ orders, onSelectOrder, page, setPage, totalCount, pageSize,
     const [rewardingOrderId, setRewardingOrderId] = useState(null);
     const [rewardMessages, setRewardMessages] = useState({});
     const [pdfGenerations, setPdfGenerations] = useState({});
-    const [pdfDownloadDate, setPdfDownloadDate] = useState(() => new Date().toLocaleDateString('en-CA'));
+    const [pdfDownloadDate, setPdfDownloadDate] = useState(getCurrentPacificDate);
     const [bulkPdfDownload, setBulkPdfDownload] = useState({ running: false, completed: 0, total: 0, message: '' });
 
     // Clear selection whenever the visible orders change (page change, filter, search, etc.)
@@ -272,7 +272,7 @@ const OrderList = ({ orders, onSelectOrder, page, setPage, totalCount, pageSize,
             <div className="table-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '14px', flexWrap: 'wrap', padding: '10px' }}>
                 <span>Total Orders: {totalCount}</span>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-                    <label htmlFor="pdf-download-date" style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Order date</label>
+                    <label htmlFor="pdf-download-date" style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Order date (Pacific)</label>
                     <input
                         id="pdf-download-date"
                         type="date"
