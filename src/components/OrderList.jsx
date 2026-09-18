@@ -66,6 +66,7 @@ const OrderList = ({ orders, onSelectOrder, page, setPage, totalCount, pageSize,
 
     const formatDate = (dateString) => {
         return new Date(dateString).toLocaleDateString('en-US', {
+            timeZone: 'America/Los_Angeles',
             year: 'numeric',
             month: 'short',
             day: 'numeric',
