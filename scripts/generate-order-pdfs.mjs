@@ -1,6 +1,7 @@
 import { createClient } from '@supabase/supabase-js';
 import { degrees, PDFDocument, rgb, StandardFonts } from 'pdf-lib';
 import sharp from 'sharp';
+import { downloadOrderImage } from './download-order-image.mjs';
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -11,7 +12,6 @@ const ORDER_PDF_WEBHOOK_SECRET = process.env.ORDER_PDF_WEBHOOK_SECRET;
 const MAX_ORDERS = Math.max(1, Number.parseInt(process.env.MAX_ORDERS || '3', 10) || 3);
 const MAX_ATTEMPTS = Math.max(1, Number.parseInt(process.env.MAX_ATTEMPTS || '5', 10) || 5);
 const STALE_MS = 30 * 60 * 1000;
-const IMAGE_TIMEOUT_MS = 30_000;
 // Match BatcherPRO's locked canvas export: 67 x 92 mm at 1,200 DPI, encoded
 // with its quality-0.50 JPEG profile.
 const TARGET_DPI = 1200;
@@ -161,15 +161,14 @@ const fetchImage = async urls => {
         if (!match) throw new MissingImageCandidateError('invalid inline image data');
         bytes = Buffer.from(match[1], 'base64');
       } else {
-        const response = await fetch(url, {
-          headers: { apikey: SUPABASE_SERVICE_ROLE_KEY, Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}` },
-          signal: AbortSignal.timeout(IMAGE_TIMEOUT_MS),
+        const response = await downloadOrderImage(url, {
+          apikey: SUPABASE_SERVICE_ROLE_KEY, Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
         });
         if (response.status === 404 || response.status === 410) {
           throw new MissingImageCandidateError(`missing object (HTTP ${response.status}) from ${url}`);
         }
         if (!response.ok) throw new Error(`temporary download failure (HTTP ${response.status}) from ${url}`);
-        bytes = Buffer.from(await response.arrayBuffer());
+        bytes = response.bytes;
       }
       if (!bytes.length) throw new MissingImageCandidateError(`empty image object from ${url}`);
       try {
