@@ -1,6 +1,11 @@
 import { supabase, supabaseAdmin, getAdminAuthHeaders } from './supabaseClient';
+import { completeOlderOrders } from './completeOlderOrders.mjs';
 
 const ordersClient = supabaseAdmin;
+export const completeOrdersOlderThanTwoWeeks = async () => completeOlderOrders(
+    import.meta.env.VITE_SUPABASE_URL + '/functions/v1/complete-older-orders',
+    await getAdminAuthHeaders(),
+);
 const ORDER_TIME_ZONE = 'America/Los_Angeles';
 
 const pacificDateTimeFormatter = new Intl.DateTimeFormat('en-US', {
