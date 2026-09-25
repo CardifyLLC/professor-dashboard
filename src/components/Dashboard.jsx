@@ -449,6 +449,7 @@ const Dashboard = () => {
                                                 activeStatus={statusFilter}
                                                 onChangeStatus={handleStatusFilterChange}
                                                 onBulkStatusChange={handleBulkStatusChange}
+                                                onOrdersUpdated={loadOrders}
                                             />
                                         </>
                                     )}
