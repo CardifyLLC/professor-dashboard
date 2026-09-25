@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Download, TriangleAlert } from 'lucide-react';
 import { saveAs } from 'file-saver';
+import { completeOrdersOlderThanTwoWeeks } from '../services/orderService';
 import { awardCashPurchaseReward, createOrderPdfDownloadUrls, fetchCompletedOrderPdfsByDate, fetchOrderPdfGenerations, getCurrentPacificDate, hasUploadedXml, isXmlOrder } from '../services/orderService';
 
 const statusTabs = [
@@ -23,7 +24,24 @@ const isProModeOrder = (order) => {
     return metadata.proMode === true || metadata.pro_mode === true;
 };
 
-const OrderList = ({ orders, onSelectOrder, page, setPage, totalCount, pageSize, activeStatus, onChangeStatus, onBulkStatusChange }) => {
+const OrderList = ({ orders, onSelectOrder, page, setPage, totalCount, pageSize, activeStatus, onChangeStatus, onBulkStatusChange, onOrdersUpdated }) => {
+    const [completingOlder, setCompletingOlder] = useState(false);
+    const [completionMessage, setCompletionMessage] = useState('');
+    const handleCompleteOlder = async () => {
+        if (completingOlder) return;
+        setCompletingOlder(true);
+        setCompletionMessage('');
+        try {
+            const count = await completeOrdersOlderThanTwoWeeks();
+            setCompletionMessage(count === null ? 'Eligible orders marked completed.' : `${count} order${count === 1 ? '' : 's'} marked completed.`);
+            setSelectedIds(new Set());
+            await onOrdersUpdated?.();
+        } catch (error) {
+            setCompletionMessage(`Could not complete the update: ${error.message || error}`);
+        } finally {
+            setCompletingOlder(false);
+        }
+    };
     const [selectedIds, setSelectedIds] = useState(new Set());
     const [bulkUpdating, setBulkUpdating] = useState(false);
     const [updatingOrderId, setUpdatingOrderId] = useState(null);
@@ -201,6 +219,14 @@ const OrderList = ({ orders, onSelectOrder, page, setPage, totalCount, pageSize,
 
     return (
         <div className="data-table-container">
+            <div style={{ padding: '14px', display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '12px' }}>
+                <button type="button" disabled={completingOlder || bulkUpdating} onClick={handleCompleteOlder}
+                    style={{ background: '#166534', color: '#fff', border: '1px solid #22c55e', borderRadius: '8px', padding: '10px 14px', cursor: completingOlder ? 'wait' : 'pointer' }}>
+                    {completingOlder ? 'Completing orders…' : 'Complete orders 14+ days old'}
+                </button>
+                <span style={{ color: 'var(--text-muted)', fontSize: '13px' }}>Paid and shipped orders only · all pages · based on order date</span>
+                {completionMessage && <span role="status">{completionMessage}</span>}
+            </div>
             <div className="orders-filter-tabs">
                 {statusTabs.map((tab) => (
                     <button
