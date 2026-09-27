@@ -46,7 +46,7 @@ export default function AffiliateOrders({ onSelectOrder }) {
   return (
     <section className="affiliate-orders-page">
       <div className="affiliate-orders-heading">
-        <div><h1 className="page-title">Affiliate Orders</h1><p>Orders received through an approved affiliate link or code.</p></div>
+        <div><h1 className="page-title">Affiliate Orders</h1><p>Orders received through an approved affiliate link or code, including archived orders.</p></div>
         <button type="button" onClick={load} disabled={loading}><RefreshCw size={16} className={loading ? 'spin' : ''} /> Refresh</button>
       </div>
       <div className="affiliate-order-stats">
@@ -71,8 +71,8 @@ export default function AffiliateOrders({ onSelectOrder }) {
           <table className="data-table">
             <thead><tr><th>Order</th><th>Affiliate</th><th>Customer</th><th>Date</th><th>Status</th><th>Total</th></tr></thead>
             <tbody>{visibleOrders.map((order) => (
-              <tr key={order.id} onClick={() => onSelectOrder(order)}>
-                <td>#{order.id.slice(0, 8)}</td>
+              <tr key={order.id} onClick={order.isArchived ? undefined : () => onSelectOrder(order)}>
+                <td>#{order.id.slice(0, 8)}{order.isArchived && <span>Archived</span>}</td>
                 <td><strong>{order.affiliate.name || order.affiliate.email}</strong><span>{order.affiliateCode}</span></td>
                 <td><strong>{order.customer_name || 'Guest'}</strong><span>{order.customer_email}</span></td>
                 <td>{date(order.created_at)}</td>
