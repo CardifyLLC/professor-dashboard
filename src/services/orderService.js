@@ -1,5 +1,6 @@
 import { supabase, supabaseAdmin, getAdminAuthHeaders } from './supabaseClient';
 import { completeOlderOrders } from './completeOlderOrders.mjs';
+import { mergeAffiliateHistory } from './affiliateHistory.mjs';
 
 const ordersClient = supabaseAdmin;
 export const completeOrdersOlderThanTwoWeeks = async () => completeOlderOrders(
@@ -124,7 +125,7 @@ export const fetchAffiliateOrders = async () => {
 
     const pageSize = 1000;
     let from = 0;
-    const attributedOrders = [];
+    const liveOrders = [];
     while (true) {
         const { data, error } = await ordersClient
             .from('orders')
@@ -133,15 +134,29 @@ export const fetchAffiliateOrders = async () => {
             .range(from, from + pageSize - 1);
         if (error) throw error;
         const page = data || [];
-        page.forEach((order) => {
-            const affiliateCode = getOrderAffiliateCode(order);
-            const affiliate = affiliatesByCode.get(affiliateCode);
-            if (affiliate) attributedOrders.push({ ...order, affiliateCode, affiliate });
-        });
+        liveOrders.push(...page);
         if (page.length < pageSize) break;
         from += pageSize;
     }
-    return attributedOrders;
+    const archivedOrders = [];
+    from = 0;
+    while (true) {
+        const { data, error } = await ordersClient
+            .from('deleted_orders_archive')
+            .select('order_id,order_created_at,status,total_amount_cents,customer_email,affiliate_code,customer_name:order_data->>customer_name,coupon_code:order_data->>coupon_code,referral_code:order_data->>referral_code,metadata:order_data->metadata')
+            .order('order_id')
+            .range(from, from + pageSize - 1);
+        if (error) throw error;
+        const page = data || [];
+        archivedOrders.push(...page);
+        if (page.length < pageSize) break;
+        from += pageSize;
+    }
+    return mergeAffiliateHistory(liveOrders, archivedOrders).flatMap((order) => {
+        const affiliateCode = getOrderAffiliateCode(order);
+        const affiliate = affiliatesByCode.get(affiliateCode);
+        return affiliate ? [{ ...order, affiliateCode, affiliate }] : [];
+    });
 };
 
 /**
