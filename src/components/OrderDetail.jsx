@@ -1,3 +1,7 @@
+import OrderImage from './OrderImage';
+import PartnerOrderPanel from './PartnerOrderPanel';
+import { isPartnerOrder } from '../services/partnerArtwork.mjs';
+import { resolveOrderImage } from '../services/partnerOrders';
 import React, { useEffect, useState } from 'react';
 import { parseAddress, getOrderImageUrl, updateOrderCardData, updateOrderStatus, hasUploadedXml, downloadUploadedXml, rejectAndRefundOrder, fetchOrderPdfGeneration, createOrderPdfDownloadUrl, createOrderPdfDownloadUrls } from '../services/orderService';
 import { ORDER_REJECTION_TEMPLATES, getRejectionTemplate } from '../constants/rejectionTemplates';
@@ -6,6 +10,7 @@ import { saveAs } from 'file-saver';
 import { Download, Eye, EyeOff, X, Pencil, Check, Loader2 } from 'lucide-react';
 
 const OrderDetail = ({ order, onClose, onOrderUpdated }) => {
+    const partnerOrder = isPartnerOrder(order);
     const [isDownloading, setIsDownloading] = useState(false);
     const [downloadProgress, setDownloadProgress] = useState({ percent: 0, completed: 0, total: 0, status: '' });
     const [showCopySuccess, setShowCopySuccess] = useState(false);
@@ -25,6 +30,7 @@ const OrderDetail = ({ order, onClose, onOrderUpdated }) => {
     const [isDownloadingOrderPdf, setIsDownloadingOrderPdf] = useState(false);
 
     useEffect(() => {
+        if (partnerOrder) { setIsLoadingOrderPdf(false); return; }
         let active = true;
         let pollTimer;
         const loadOrderPdf = async () => {
@@ -47,7 +53,7 @@ const OrderDetail = ({ order, onClose, onOrderUpdated }) => {
             active = false;
             if (pollTimer) window.clearTimeout(pollTimer);
         };
-    }, [order.id]);
+    }, [order.id, partnerOrder]);
 
     const shippingAddress = parseAddress(order.shipping_address);
     // Parse card_images if it's a string, otherwise use as is
@@ -149,6 +155,10 @@ const OrderDetail = ({ order, onClose, onOrderUpdated }) => {
         }
     }
 
+    if (partnerOrder) {
+        cardItems.splice(0,cardItems.length,...cardData.map(card=>({type:'card',front:card.frontUrl,back:card.backUrl,data:card})));
+    }
+
     // Count cards and masks separately
     const cardCount = cardItems.filter(item => item.type === 'card').length;
     const maskCount = cardItems.filter(item => item.type === 'mask' || item.mask).length;
@@ -180,6 +190,7 @@ const OrderDetail = ({ order, onClose, onOrderUpdated }) => {
     };
 
     const startEditCard = (index, data) => {
+        if (partnerOrder) return;
         setEditingCardIndex(index);
         setEditValues({
             finish: data?.finish || '',
@@ -243,7 +254,7 @@ const OrderDetail = ({ order, onClose, onOrderUpdated }) => {
     const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
     const urlToBlob = async (url, label, attempt = 1) => {
         try {
-            const response = await fetch(url, { cache: 'no-store' });
+            const response = await fetch(await resolveOrderImage(url), { cache: 'no-store' });
             if (!response.ok) {
                 throw new Error(`HTTP ${response.status} ${response.statusText}`.trim());
             }
@@ -466,6 +477,7 @@ const OrderDetail = ({ order, onClose, onOrderUpdated }) => {
                 <div className="modal-header">
                     <div>
                         <h2>Order #{orderId}</h2>
+                        {partnerOrder && <PartnerOrderPanel order={order} onOrderUpdated={onOrderUpdated}/> }
                         {xmlTaggedCount > 0 && (
                             <div style={{ marginTop: '0.35rem', fontSize: '0.875rem', fontWeight: 600, color: '#60a5fa' }}>
                                 XML Cards: {xmlTaggedCount}
@@ -800,7 +812,7 @@ const OrderDetail = ({ order, onClose, onOrderUpdated }) => {
                                         const displayImage = isMaskOnly ? item.mask : item.front;
                                         return (
                                             <div key={index} className="relative group rounded-lg overflow-hidden shadow-md">
-                                                <img
+                                                <OrderImage
                                                     src={getOrderImageUrl(displayImage)}
                                                     alt={`Item ${index + 1}`}
                                                     loading="lazy"
@@ -820,7 +832,7 @@ const OrderDetail = ({ order, onClose, onOrderUpdated }) => {
                                                 <div className="card-preview">
                                                     <div className="card-label" style={{ color: '#60a5fa', fontWeight: 'bold' }}>Mask</div>
                                                     {item.mask ? (
-                                                        <img src={getOrderImageUrl(item.mask)} alt={`Mask ${index + 1}`} loading="lazy" />
+                                                        <OrderImage src={getOrderImageUrl(item.mask)} alt={`Mask ${index + 1}`} loading="lazy" />
                                                     ) : (
                                                         <div className="no-image-placeholder">No mask</div>
                                                     )}
@@ -831,7 +843,7 @@ const OrderDetail = ({ order, onClose, onOrderUpdated }) => {
                                                     <div className="card-preview">
                                                         <div className="card-label">Front</div>
                                                         {item.front ? (
-                                                            <img src={getOrderImageUrl(item.front)} alt={`Card ${index + 1} Front`} loading="lazy" />
+                                                            <OrderImage src={getOrderImageUrl(item.front)} alt={`Card ${index + 1} Front`} loading="lazy" />
                                                         ) : (
                                                             <div className="no-image-placeholder">No Front</div>
                                                         )}
@@ -839,7 +851,7 @@ const OrderDetail = ({ order, onClose, onOrderUpdated }) => {
                                                     <div className="card-preview" style={{ marginTop: '0.5rem' }}>
                                                         <div className="card-label">Back</div>
                                                         {item.back ? (
-                                                            <img src={getOrderImageUrl(item.back)} alt={`Card ${index + 1} Back`} loading="lazy" />
+                                                            <OrderImage src={getOrderImageUrl(item.back)} alt={`Card ${index + 1} Back`} loading="lazy" />
                                                         ) : (
                                                             <div className="no-image-placeholder">No Back</div>
                                                         )}
@@ -847,7 +859,7 @@ const OrderDetail = ({ order, onClose, onOrderUpdated }) => {
                                                     {item.mask && (
                                                         <div className="card-preview" style={{ marginTop: '0.5rem' }}>
                                                             <div className="card-label" style={{ color: '#60a5fa', fontWeight: 'bold' }}>Mask</div>
-                                                            <img src={getOrderImageUrl(item.mask)} alt={`Card ${index + 1} Mask`} loading="lazy" />
+                                                            <OrderImage src={getOrderImageUrl(item.mask)} alt={`Card ${index + 1} Mask`} loading="lazy" />
                                                         </div>
                                                     )}
                                                 </>
@@ -889,6 +901,7 @@ const OrderDetail = ({ order, onClose, onOrderUpdated }) => {
                                                                 onClick={() => startEditCard(index, itemData)}
                                                                 style={{ padding: '4px', cursor: 'pointer', background: 'transparent', border: 'none', color: 'var(--text-muted)', borderRadius: '4px' }}
                                                                 title="Edit card details"
+                                                                disabled={partnerOrder}
                                                             >
                                                                 <Pencil className="w-4 h-4" />
                                                             </button>
