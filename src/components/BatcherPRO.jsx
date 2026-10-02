@@ -1,3 +1,6 @@
+import OrderImage from './OrderImage';
+import { isPartnerOrder, isPartnerImage } from '../services/partnerArtwork.mjs';
+import { resolveOrderImage, partnerOrderRequest } from '../services/partnerOrders';
 import React, { useState, useRef, useEffect, createContext, useContext } from 'react';
 import { jsPDF } from 'jspdf';
 import { Upload, FileText, Settings, Download, Layers, X, Grid, Image as ImageIcon, RefreshCw, ArrowRight, ArrowLeft, ZoomIn, ZoomOut, Move, RotateCcw, Eye, Printer, Save, FolderOpen, Trash2, RotateCw, Layout, GripVertical, Hand, MousePointer2, AlignCenterVertical, Scissors, ImagePlus, Images, Sparkles, Calendar, ChevronDown, ChevronLeft, ChevronRight } from 'lucide-react';
@@ -104,6 +107,7 @@ const CardBatcherPro = ({ showSidebar = true, onBackToDashboard }) => {
   const [savedPresets, setSavedPresets] = useState([]);
   const [isLoadingProject, setIsLoadingProject] = useState(false);
   const [isLoadingPaidOrders, setIsLoadingPaidOrders] = useState(false);
+  const [partnerLoadErrors,setPartnerLoadErrors] = useState([]);
   const [paidOrdersLoaded, setPaidOrdersLoaded] = useState(false);
   const didAutoLoadPaidOrdersRef = useRef(false);
   const [exportScopeModal, setExportScopeModal] = useState({
@@ -394,6 +398,7 @@ const CardBatcherPro = ({ showSidebar = true, onBackToDashboard }) => {
 
   // Batch Upload Backs
   const handleBatchBackUpload = (e) => {
+    if (frontImages.some(card=>card.partnerOrderId)) { alert('Partner orders must use their submitted artwork.'); return; }
     const files = Array.from(e.target.files);
     if (files.length === 0) return;
 
@@ -415,6 +420,7 @@ const CardBatcherPro = ({ showSidebar = true, onBackToDashboard }) => {
 
   // Batch Upload Spot Masks
   const handleBatchSpotMaskUpload = (e) => {
+    if (frontImages.some(card=>card.partnerOrderId)) { alert('Partner orders must use their submitted artwork.'); return; }
     const files = Array.from(e.target.files);
     if (files.length === 0) return;
 
@@ -613,6 +619,7 @@ const CardBatcherPro = ({ showSidebar = true, onBackToDashboard }) => {
 
   const upscaleLoadedImages = async () => {
     if (frontImages.length === 0 || isUpscaling) return;
+    if (frontImages.some(card=>card.partnerOrderId)) { alert('Partner orders use the original client artwork. Export their print sheets without AI upscaling.'); return; }
 
     const tasks = [];
     const cardsToUpscale = customerPages
@@ -698,6 +705,7 @@ const CardBatcherPro = ({ showSidebar = true, onBackToDashboard }) => {
   };
 
   const handleIndividualBackUpload = (e, index) => {
+    if (frontImages[index]?.partnerOrderId) { alert('Partner orders must use their submitted artwork.'); return; }
     const file = e.target.files[0];
     if (!file) return;
     const url = URL.createObjectURL(file);
@@ -710,6 +718,7 @@ const CardBatcherPro = ({ showSidebar = true, onBackToDashboard }) => {
   };
 
   const handleIndividualSpotMaskUpload = (e, index) => {
+    if (frontImages[index]?.partnerOrderId) { alert('Partner orders must use their submitted artwork.'); return; }
     const file = e.target.files[0];
     if (!file) return;
     const url = URL.createObjectURL(file);
@@ -722,6 +731,7 @@ const CardBatcherPro = ({ showSidebar = true, onBackToDashboard }) => {
   };
 
   const clearIndividualBack = (index) => {
+    if (frontImages[index]?.partnerOrderId) return;
     setFrontImages(prev => {
       const next = [...prev];
       next[index] = { ...next[index], customBack: null };
@@ -730,6 +740,7 @@ const CardBatcherPro = ({ showSidebar = true, onBackToDashboard }) => {
   };
 
   const revertIndividualBack = (index) => {
+    if (frontImages[index]?.partnerOrderId) return;
     setFrontImages(prev => {
       const next = [...prev];
       const { customBack, ...rest } = next[index];
@@ -853,6 +864,7 @@ const CardBatcherPro = ({ showSidebar = true, onBackToDashboard }) => {
     setIsLoadingPaidOrders(true);
     try {
       const paidOrders = await fetchPaidOrdersForBatcher();
+      setPartnerLoadErrors(paidOrders.filter(order=>isPartnerOrder(order) && !order.partnerArtwork?.ready).map(order=>`#${order.id.slice(0,8)}: ${order.partnerArtwork?.error || 'artwork is not ready; open the order for details'}`));
 
       if (paidOrders.length === 0) {
         if (!isAutoLoad) {
@@ -915,7 +927,8 @@ const CardBatcherPro = ({ showSidebar = true, onBackToDashboard }) => {
           const cardData = typeof order.card_data === 'string'
             ? JSON.parse(order.card_data)
             : (order.card_data || []);
-          const isProModeOrder = order.metadata?.proMode === true || order.metadata?.pro_mode === true;
+          const partnerOrder = isPartnerOrder(order);
+          const isProModeOrder = partnerOrder || order.metadata?.proMode === true || order.metadata?.pro_mode === true;
 
           if (cardData.length > 0) {
             // Use structured card_data which has explicit frontUrl/backUrl — immune to positional drift
@@ -927,7 +940,8 @@ const CardBatcherPro = ({ showSidebar = true, onBackToDashboard }) => {
                 ? (card.originalBackUrl || card.originalBack || card.backUrl)
                 : card.backUrl;
               if (!frontUrl) return;
-              newCards.push({
+              const copies = partnerOrder ? card.quantity : 1;
+              for (let copy=0;copy<copies;copy++) newCards.push({
                 id: Math.random().toString(36).substr(2, 9),
                 url: isProModeOrder
                   ? getOrderImageUrl(frontUrl)
@@ -938,6 +952,7 @@ const CardBatcherPro = ({ showSidebar = true, onBackToDashboard }) => {
                 customerName: customerName,
                 orderId: order.id,
                 orderDate: orderDate,
+                partnerOrderId: partnerOrder ? order.id : undefined,
                 cardDataIndex
               });
             });
@@ -1132,7 +1147,7 @@ const CardBatcherPro = ({ showSidebar = true, onBackToDashboard }) => {
 
   const urlToBase64 = async (url) => {
     if (!url) return null;
-    const response = await fetch(url);
+    const response = await fetch(await resolveOrderImage(url));
     const blob = await response.blob();
     return new Promise((resolve) => {
       const reader = new FileReader();
@@ -1147,8 +1162,10 @@ const CardBatcherPro = ({ showSidebar = true, onBackToDashboard }) => {
     try {
       const frontsBase64 = await Promise.all(frontImages.map(async (img) => ({
         id: img.id,
-        data: await urlToBase64(img.url),
-        customBackData: img.customBack ? await urlToBase64(img.customBack) : undefined,
+        data: isPartnerImage(img.url) ? img.url : await urlToBase64(img.url),
+        partnerOrderId: img.partnerOrderId,
+        customerName: img.customerName,
+        customBackData: isPartnerImage(img.customBack) ? img.customBack : img.customBack ? await urlToBase64(img.customBack) : undefined,
         customBackIsNull: img.customBack === null,
         spotMaskData: img.spotMask ? await urlToBase64(img.spotMask) : undefined
       })));
@@ -1191,6 +1208,8 @@ const CardBatcherPro = ({ showSidebar = true, onBackToDashboard }) => {
         setFrontImages(data.frontImages.map(img => ({
           id: img.id || Math.random().toString(36),
           url: img.data,
+          partnerOrderId: img.partnerOrderId,
+          customerName: img.customerName,
           customBack: img.customBackIsNull ? null : (img.customBackData || undefined),
           spotMask: img.spotMaskData || undefined,
           file: null
@@ -1209,7 +1228,8 @@ const CardBatcherPro = ({ showSidebar = true, onBackToDashboard }) => {
 
   // Locked export path: this matches the canvas → JPEG workflow that the client
   // approved for PDF output quality.
-  const processImageForPrintLocked = (imageUrl, widthMM, heightMM, rotate180 = false) => {
+  const processImageForPrintLocked = async (imageUrl, widthMM, heightMM, rotate180 = false) => {
+    const resolvedUrl = await resolveOrderImage(imageUrl);
     return new Promise((resolve, reject) => {
       const img = new Image();
       img.crossOrigin = 'Anonymous';
@@ -1245,7 +1265,7 @@ const CardBatcherPro = ({ showSidebar = true, onBackToDashboard }) => {
         resolve(canvas.toDataURL('image/jpeg', quality));
       };
       img.onerror = reject;
-      img.src = imageUrl;
+      img.src = resolvedUrl;
     });
   };
 
@@ -1296,6 +1316,14 @@ const CardBatcherPro = ({ showSidebar = true, onBackToDashboard }) => {
 
   // --- PDF GENERATION: Main Artwork (chunked for large orders) ---
   const generatePDF = async (pagesOverride) => {
+    const partnerIds=[...new Set((pagesOverride || customerPages).flatMap(page=>(page.entries || []).map(entry=>entry.card?.partnerOrderId)).filter(Boolean))];
+    try {
+      for(const orderId of partnerIds) {
+        const manifest=await partnerOrderRequest({action:'manifest',orderId,prepare:false});
+        if(!manifest.ready)throw new Error(`Partner order ${orderId.slice(0,8)} is not available for printing.`);
+      }
+    } catch(error) { alert(error.message); return; }
+
     setGenerating(true);
     setGenerationProgress(0);
     setGenerationLabel('Exporting PDF');
@@ -1389,6 +1417,7 @@ const CardBatcherPro = ({ showSidebar = true, onBackToDashboard }) => {
                   doc.rect(x, y, cWidth, cHeight);
                 }
               } catch (e) {
+                if (pageImages[i]?.partnerOrderId) throw new Error('Partner front artwork could not be loaded. Refresh the order before printing.');
                 console.error(e);
               }
             }
@@ -1442,6 +1471,7 @@ const CardBatcherPro = ({ showSidebar = true, onBackToDashboard }) => {
                     sourceToUse = cached;
                     aliasId = cacheKey;
                   } catch (e) {
+                    if (card.partnerOrderId) throw new Error('Partner back artwork could not be loaded. Refresh the order before printing.');
                     console.error('Custom back failed to load (skipping this back).', e);
                     sourceToUse = null;
                   }
@@ -1710,6 +1740,7 @@ const CardBatcherPro = ({ showSidebar = true, onBackToDashboard }) => {
     return (
       <BatcherPROContext.Provider value={contextValue}>
         <div className="dashboard-container">
+          {partnerLoadErrors.length>0 && <div role="alert" style={{position:"fixed",bottom:12,right:12,zIndex:100,maxWidth:480,background:"#78350f",color:"white",padding:12}}>Partner orders awaiting artwork: {partnerLoadErrors.join("; ")}</div>}
           <BeautifulExportModal
             isOpen={exportScopeModal.open}
             onClose={closeExportScopeModal}
@@ -1726,7 +1757,7 @@ const CardBatcherPro = ({ showSidebar = true, onBackToDashboard }) => {
           />
           <aside className="sidebar">
             <div className="logo">
-              <img src="/logo.png" alt="TCGPlaytest Logo" style={{ width: '32px', height: '32px' }} />
+              <OrderImage src="/logo.png" alt="TCGPlaytest Logo" style={{ width: '32px', height: '32px' }} />
               TCGPlaytest
             </div>
             <nav>
@@ -2343,7 +2374,7 @@ const CardBatcherPro = ({ showSidebar = true, onBackToDashboard }) => {
                               </label>
                               {backImage && (
                                 <>
-                                  <img src={backImage} className="w-12 h-12 object-cover rounded border border-slate-300" alt="Back" />
+                                  <OrderImage src={backImage} className="w-12 h-12 object-cover rounded border border-slate-300" alt="Back" />
                                   <button
                                     onClick={() => setBackImage(null)}
                                     className="w-12 h-12 flex items-center justify-center text-red-500 hover:bg-red-50 rounded border border-slate-200 shrink-0"
@@ -2526,7 +2557,7 @@ const CardBatcherPro = ({ showSidebar = true, onBackToDashboard }) => {
                                 */}
 
                                 <div className="relative group aspect-[2.5/3.5]">
-                                  <img
+                                  <OrderImage
                                     loading="lazy"
                                     src={img.url}
                                     className="w-full h-full object-cover rounded border border-slate-200"
@@ -2711,7 +2742,7 @@ const CardBatcherPro = ({ showSidebar = true, onBackToDashboard }) => {
                       >
                         {/* ALL YOUR CARD CONTENT GOES HERE */}
                         {templateOverlay && (
-                          <img
+                          <OrderImage
                             src={templateOverlay}
                             className="absolute inset-0 w-full h-full object-contain pointer-events-none"
                             style={{ opacity: config.overlayOpacity }}
@@ -2852,7 +2883,7 @@ const CardBatcherPro = ({ showSidebar = true, onBackToDashboard }) => {
                                   }}
                                 >
                                   {image ? (
-                                    <img
+                                    <OrderImage
                                       src={image}
                                       onLoad={(e) => logImgInfo('front (preview-grid)', e.currentTarget)}
                                       className="w-full h-full object-cover"
@@ -2881,7 +2912,7 @@ const CardBatcherPro = ({ showSidebar = true, onBackToDashboard }) => {
 
                                   {/* Spot Mask Hover Preview */}
                                   {previewSide === 'front' && cardData?.spotMask && (
-                                    <img
+                                    <OrderImage
                                       src={cardData.spotMask}
                                       className="absolute inset-0 w-full h-full object-cover opacity-0 group-hover:opacity-40 transition-opacity z-15 pointer-events-none mix-blend-multiply"
                                       style={{ filter: 'sepia(1) hue-rotate(130deg) saturate(5)' }} // Cyan tint for preview
@@ -3564,7 +3595,7 @@ const CardBatcherPro = ({ showSidebar = true, onBackToDashboard }) => {
                         </label>
                         {backImage && (
                           <>
-                            <img src={backImage} className="w-10 h-10 object-cover rounded border border-slate-300" alt="Back" />
+                            <OrderImage src={backImage} className="w-10 h-10 object-cover rounded border border-slate-300" alt="Back" />
                             <button
                               onClick={() => setBackImage(null)}
                               className="w-10 h-10 flex items-center justify-center text-red-500 hover:bg-red-50 rounded border border-slate-200 shrink-0"
@@ -3726,7 +3757,7 @@ const CardBatcherPro = ({ showSidebar = true, onBackToDashboard }) => {
                   >
                     {frontImages.map((img, idx) => (
                       <div key={img.id} className="relative group aspect-[2.5/3.5]">
-                        <img
+                        <OrderImage
                           loading="lazy"
                           src={img.url}
                           className="w-full h-full object-cover rounded border border-slate-200"
@@ -3898,7 +3929,7 @@ const CardBatcherPro = ({ showSidebar = true, onBackToDashboard }) => {
                   }}
                 >
                   {templateOverlay && (
-                    <img
+                    <OrderImage
                       src={templateOverlay}
                       className="absolute inset-0 w-full h-full object-contain pointer-events-none"
                       style={{ opacity: config.overlayOpacity }}
@@ -4029,7 +4060,7 @@ const CardBatcherPro = ({ showSidebar = true, onBackToDashboard }) => {
                             }}
                           >
                             {image ? (
-                              <img
+                              <OrderImage
                                 src={image}
                                 onLoad={(e) => logImgInfo('front (main-grid)', e.currentTarget)}
                                 onError={(e) => {
@@ -4060,7 +4091,7 @@ const CardBatcherPro = ({ showSidebar = true, onBackToDashboard }) => {
                             )}
 
                             {previewSide === 'front' && cardData?.spotMask && (
-                              <img
+                              <OrderImage
                                 src={cardData.spotMask}
                                 className="absolute inset-0 w-full h-full object-cover opacity-0 group-hover:opacity-40 transition-opacity z-15 pointer-events-none mix-blend-multiply"
                                 style={{ filter: 'sepia(1) hue-rotate(130deg) saturate(5)' }}
@@ -4569,7 +4600,7 @@ export const BatcherPROSidebar = () => {
               </label>
               {backImage && (
                 <>
-                  <img src={backImage} className="w-12 h-12 object-cover rounded" style={{ border: '1px solid var(--border-color)' }} alt="Back" />
+                  <OrderImage src={backImage} className="w-12 h-12 object-cover rounded" style={{ border: '1px solid var(--border-color)' }} alt="Back" />
                   <button
                     onClick={() => setBackImage(null)}
                     className="w-12 h-12 flex items-center justify-center rounded shrink-0"
@@ -4742,7 +4773,7 @@ export const BatcherPROSidebar = () => {
         >
           {frontImages.map((img, idx) => (
             <div key={img.id} className="relative group aspect-[2.5/3.5]">
-              <img
+              <OrderImage
                 loading="lazy"
                 src={img.url}
                 className="w-full h-full object-cover rounded"
