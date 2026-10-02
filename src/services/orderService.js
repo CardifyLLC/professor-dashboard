@@ -1,3 +1,5 @@
+import { isPartnerImage, isPartnerOrder } from './partnerArtwork.mjs';
+import { loadPartnerArtwork, partnerOrderRequest } from './partnerOrders';
 import { supabase, supabaseAdmin, getAdminAuthHeaders } from './supabaseClient';
 import { completeOlderOrders } from './completeOlderOrders.mjs';
 import { mergeAffiliateHistory } from './affiliateHistory.mjs';
@@ -167,15 +169,20 @@ export const fetchAffiliateOrders = async () => {
 export const fetchPaidOrdersForBatcher = async () => {
     const { data, error } = await ordersClient
         .from('orders')
-        .select('id, customer_name, status, created_at, card_images, card_data, metadata')
-        .in('status', ['paid', 'PAID'])
+        .select('id, customer_name, status, created_at, quantity, card_images, card_data, metadata')
+        .in('status', ['paid', 'PAID', 'processing', 'PROCESSING'])
         .order('created_at', { ascending: false });
 
     if (error) {
         console.error('Error fetching paid orders:', error);
         throw error;
     }
-    return (data || []).filter(order => order.metadata?.productType !== 'cardstock');
+    const orders = (data || []).filter(order => order.metadata?.productType !== 'cardstock' && (String(order.status).toLowerCase()==='paid' || isPartnerOrder(order)));
+    const result = [];
+    for (let i=0;i<orders.length;i+=4) {
+        result.push(...await Promise.all(orders.slice(i,i+4).map(order => loadPartnerArtwork(order,false))));
+    }
+    return result;
 };
 
 /** Returns the current automatic PDF state for one order. */
@@ -380,7 +387,7 @@ export const fetchOrderById = async (orderId) => {
         console.error('Error fetching order by ID:', error);
         throw error;
     }
-    return data;
+    return loadPartnerArtwork(data);
 };
 
 /**
@@ -486,6 +493,7 @@ export const downloadUploadedXml = (order) => {
 export const getOrderImageUrl = (path) => {
     if (!path) return null;
     const trimmed = String(path).trim();
+    if (isPartnerImage(trimmed)) return trimmed;
 
     // If it's already a URL/data/blob, return it as-is
     if (trimmed.startsWith('http')) return trimmed;
@@ -531,6 +539,9 @@ export const getOrderImageUrl = (path) => {
  * @returns {Promise<object>} Updated order object
  */
 export const updateOrderCardData = async (orderId, cardData) => {
+    const existing = await ordersClient.from('orders').select('metadata').eq('id',orderId).single();
+    if (existing.error) throw existing.error;
+    if (isPartnerOrder(existing.data)) throw new Error('Partner artwork must stay in its tracked private production storage.');
     const { data, error } = await ordersClient
         .from('orders')
         .update({ card_data: JSON.stringify(cardData) })
@@ -552,6 +563,9 @@ export const updateOrderCardData = async (orderId, cardData) => {
  * @returns {Promise<object>} Updated order object
  */
 export const updateOrderCardImages = async (orderId, cardImages) => {
+    const existing = await ordersClient.from('orders').select('metadata').eq('id',orderId).single();
+    if (existing.error) throw existing.error;
+    if (isPartnerOrder(existing.data)) throw new Error('Partner artwork must stay in its tracked private production storage.');
     const { data, error } = await ordersClient
         .from('orders')
         .update({ card_images: JSON.stringify(cardImages) })
@@ -572,9 +586,16 @@ export const updateOrderCardImages = async (orderId, cardImages) => {
  * @param {string} status - The new order status
  * @returns {Promise<object>} Updated order object
  */
-export const updateOrderStatus = async (orderId, status) => {
+export const updateOrderStatus = async (orderId, status, shipment) => {
     if (!ORDER_STATUSES.includes(status)) {
         throw new Error(`Unsupported order status: ${status}`);
+    }
+
+    const existing = await ordersClient.from('orders').select('metadata').eq('id',orderId).single();
+    if (existing.error) throw existing.error;
+    if (isPartnerOrder(existing.data)) {
+        const result=await partnerOrderRequest({action:'status',orderId,status,shipment});
+        return loadPartnerArtwork(result.order,false);
     }
 
     const changes = {
@@ -613,6 +634,9 @@ export const rejectAndRefundOrder = async ({ orderId, templateKey, adminNote = '
         throw new Error('Missing Supabase configuration for function invocation.');
     }
 
+    const existing = await ordersClient.from('orders').select('metadata').eq('id',orderId).single();
+    if (existing.error) throw existing.error;
+    if (isPartnerOrder(existing.data)) await partnerOrderRequest({action:'status',orderId,status:'cancelled'});
     const authHeaders = await getAdminAuthHeaders();
     const response = await fetch(`${supabaseUrl}/functions/v1/reject-order`, {
         method: 'POST',
