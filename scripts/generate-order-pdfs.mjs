@@ -1,3 +1,4 @@
+import { isPartnerOrder } from '../src/services/partnerArtwork.mjs';
 import { createClient } from '@supabase/supabase-js';
 import { degrees, PDFDocument, rgb, StandardFonts } from 'pdf-lib';
 import sharp from 'sharp';
@@ -280,10 +281,11 @@ const notifyCustomerRepairRequired = async orderId => {
 
 const backfillMissingJobs = async () => {
   const { data: paidOrders, error: ordersError } = await supabase
-    .from('orders').select('id').ilike('status', 'paid').order('created_at', { ascending: true }).limit(1000);
+    .from('orders').select('id,metadata').ilike('status', 'paid').order('created_at', { ascending: true }).limit(1000);
   if (ordersError) throw ordersError;
   if (!paidOrders?.length) return;
-  const ids = paidOrders.map(order => order.id);
+  const ids = paidOrders.filter(order=>!isPartnerOrder(order)).map(order => order.id);
+  if (!ids.length) return;
   const { data: existing, error: jobsError } = await supabase
     .from('order_pdf_generations').select('order_id').in('order_id', ids);
   if (jobsError) throw jobsError;
@@ -301,11 +303,12 @@ const findJobs = async () => {
   // can share nearly identical timestamps, so ordering the jobs themselves does
   // not reliably prioritize the newest customer orders.
   const { data: recentOrders, error: ordersError } = await supabase.from('orders')
-    .select('id, created_at').ilike('status', 'paid')
+    .select('id, created_at, metadata').ilike('status', 'paid')
     .order('created_at', { ascending: false }).limit(1000);
   if (ordersError) throw ordersError;
   if (!recentOrders?.length) return [];
-  const recentIds = recentOrders.map(order => order.id);
+  const recentIds = recentOrders.filter(order=>!isPartnerOrder(order)).map(order => order.id);
+  if (!recentIds.length) return [];
   const { data, error } = await supabase.from('order_pdf_generations')
     .select('*').in('order_id', recentIds)
     .neq('status', 'completed').lt('attempt_count', MAX_ATTEMPTS);
