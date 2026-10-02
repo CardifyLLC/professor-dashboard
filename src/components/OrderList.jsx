@@ -1,3 +1,4 @@
+import { isPartnerOrder } from '../services/partnerArtwork.mjs';
 import React, { useState, useEffect } from 'react';
 import { Download, TriangleAlert } from 'lucide-react';
 import { saveAs } from 'file-saver';
@@ -59,7 +60,7 @@ const OrderList = ({ orders, onSelectOrder, page, setPage, totalCount, pageSize,
     useEffect(() => {
         let active = true;
         let timer;
-        const orderIds = orders.map(order => order.id);
+        const orderIds = orders.filter(order => !isPartnerOrder(order)).map(order => order.id);
 
         const loadPdfStatuses = async () => {
             try {
@@ -399,7 +400,7 @@ const OrderList = ({ orders, onSelectOrder, page, setPage, totalCount, pageSize,
                             <td>
                                 <div style={{ display: 'flex', gap: '0.35rem', flexWrap: 'wrap' }}>
                                     <span className={`status-badge ${xmlOrder ? 'status-paid' : 'status-pending'}`}>
-                                        {isCardstockOrder ? 'Cardstock' : (xmlOrder ? 'XML' : 'Standard')}
+                                        {isPartnerOrder(order) ? 'Partner API' : isCardstockOrder ? 'Cardstock' : (xmlOrder ? 'XML' : 'Standard')}
                                     </span>
                                     {hasXml && (
                                         <span className="status-badge" style={{ backgroundColor: '#dbeafe', color: '#1d4ed8' }}>
@@ -428,7 +429,9 @@ const OrderList = ({ orders, onSelectOrder, page, setPage, totalCount, pageSize,
                                 )}
                             </td>
                             <td>
-                                {!pdfGeneration ? (
+                                {isPartnerOrder(order) ? (
+                                    <span className="pdf-status-badge">Print in BatcherPRO</span>
+                                ) : !pdfGeneration ? (
                                     <span className="pdf-status-badge pdf-status-none">Not generated</span>
                                 ) : pdfGeneration.status === 'completed' ? (
                                     <span className="pdf-status-badge pdf-status-ready" title={`${pdfGeneration.completed_parts || 1} PDF part(s) ready`}>
