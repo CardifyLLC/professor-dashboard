@@ -14,6 +14,7 @@ import Subscribers from './Subscribers';
 import DeletedOrdersStats from './DeletedOrdersStats';
 import OrdersMap from './OrdersMap';
 import AffiliateRequests from './AffiliateRequests';
+import PartnershipRequests from './PartnershipRequests';
 import AffiliateOrders from './AffiliateOrders';
 import SharedDeckRequests from './SharedDeckRequests';
 import PrintsAnalytics from './PrintsAnalytics';
@@ -65,8 +66,8 @@ const Dashboard = () => {
         }
     };
 
-    const loadOrders = useCallback(async () => {
-        setLoading(true);
+    const loadOrders = useCallback(async (silent=false) => {
+        if (!silent) setLoading(true);
         try {
             const { data, count } = await fetchOrders(page, pageSize, searchTerm, statusFilter, dateFrom, dateTo);
             setOrders(data);
@@ -92,6 +93,8 @@ const Dashboard = () => {
 
     useEffect(() => {
         loadOrders();
+        const timer=window.setInterval(()=>{ if(document.visibilityState==='visible')loadOrders(true); },15000);
+        return ()=>window.clearInterval(timer);
     }, [loadOrders]);
 
     useEffect(() => {
@@ -241,6 +244,14 @@ const Dashboard = () => {
                             >
                                 <span>📬</span> Subscribers
                             </div>
+                            <button
+                                type="button"
+                                className={`nav-item ${activeView === 'partnerships' ? 'active' : ''}`}
+                                onClick={() => { setActiveView('partnerships'); setMobileMenuOpen(false); }}
+                                style={{ width: '100%', font: 'inherit', textAlign: 'left' }}
+                            >
+                                <span>🏢</span> Partnerships
+                            </button>
                             <div
                                 className={`nav-item ${activeView === 'affiliates' ? 'active' : ''}`}
                                 onClick={() => { setActiveView('affiliates'); setMobileMenuOpen(false); }}
@@ -480,6 +491,10 @@ const Dashboard = () => {
 
                                     {activeView === 'subscribers' && (
                                         <Subscribers />
+                                    )}
+
+                                    {activeView === 'partnerships' && (
+                                        <PartnershipRequests />
                                     )}
 
                                     {activeView === 'affiliates' && (
