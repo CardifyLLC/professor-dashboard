@@ -289,15 +289,18 @@ export const fetchNewOrderPdfs = async () => {
 export const markOrderPdfsDownloaded = async (orderIds) => {
     const ids = [...new Set(orderIds)];
     if (!ids.length) return [];
-    const downloadedAt = new Date().toISOString();
-    const { data, error } = await ordersClient
-        .from('order_pdf_generations')
-        .update({ downloaded_at: downloadedAt, updated_at: downloadedAt })
-        .in('order_id', ids)
-        .eq('status', 'completed')
-        .select('order_id, downloaded_at');
-    if (error) throw error;
-    if (ids.some(id => !data?.some(row => row.order_id === id && row.downloaded_at))) {
+    // Use our authenticated server endpoint: the browser's Supabase CORS
+    // policy can reject PATCH even though reads and PDF downloads work.
+    const response = await fetch('/api/order-pdf-downloads', {
+        method: 'POST',
+        headers: { ...await getAdminAuthHeaders(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ orderIds: ids }),
+        cache: 'no-store',
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(result.error || 'Could not save the PDF download confirmation.');
+    const data = result.downloads;
+    if (!Array.isArray(data) || ids.some(id => !data.some(row => row.order_id === id && row.downloaded_at))) {
         throw new Error('Download confirmation was not saved. Check your admin access and the PDF status.');
     }
     if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent(ORDER_PDFS_DOWNLOADED_EVENT));
