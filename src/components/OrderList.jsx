@@ -3,7 +3,8 @@ import React, { useState, useEffect } from 'react';
 import { Download, TriangleAlert } from 'lucide-react';
 import { saveAs } from 'file-saver';
 import { completeOrdersOlderThanTwoWeeks } from '../services/orderService';
-import { awardCashPurchaseReward, createOrderPdfDownloadUrls, fetchCompletedOrderPdfsByDate, fetchOrderPdfGenerations, getCurrentPacificDate, hasUploadedXml, isXmlOrder } from '../services/orderService';
+import { awardCashPurchaseReward, createOrderPdfDownloadUrls, fetchCompletedOrderPdfsByDate, fetchOrderPdfGenerations, getCurrentPacificDate, hasUploadedXml, isXmlOrder, markOrderPdfsDownloaded } from '../services/orderService';
+import { downloadOrderPdfs, ORDER_PDFS_DOWNLOADED_EVENT } from '../services/orderPdfDownloads.mjs';
 
 const statusTabs = [
     { value: 'all', label: 'All' },
@@ -49,8 +50,19 @@ const OrderList = ({ orders, onSelectOrder, page, setPage, totalCount, pageSize,
     const [rewardingOrderId, setRewardingOrderId] = useState(null);
     const [rewardMessages, setRewardMessages] = useState({});
     const [pdfGenerations, setPdfGenerations] = useState({});
+    const [pdfRefreshVersion, setPdfRefreshVersion] = useState(0);
     const [pdfDownloadDate, setPdfDownloadDate] = useState(getCurrentPacificDate);
     const [bulkPdfDownload, setBulkPdfDownload] = useState({ running: false, completed: 0, total: 0, message: '' });
+
+    useEffect(() => {
+        const refresh = () => setPdfRefreshVersion(version => version + 1);
+        window.addEventListener(ORDER_PDFS_DOWNLOADED_EVENT, refresh);
+        window.addEventListener('focus', refresh);
+        return () => {
+            window.removeEventListener(ORDER_PDFS_DOWNLOADED_EVENT, refresh);
+            window.removeEventListener('focus', refresh);
+        };
+    }, []);
 
     // Clear selection whenever the visible orders change (page change, filter, search, etc.)
     useEffect(() => {
@@ -81,7 +93,7 @@ const OrderList = ({ orders, onSelectOrder, page, setPage, totalCount, pageSize,
             active = false;
             if (timer) window.clearTimeout(timer);
         };
-    }, [orders]);
+    }, [orders, pdfRefreshVersion]);
 
     const formatDate = (dateString) => {
         return new Date(dateString).toLocaleDateString('en-US', {
@@ -157,39 +169,19 @@ const OrderList = ({ orders, onSelectOrder, page, setPage, totalCount, pageSize,
         setBulkPdfDownload({ running: true, completed: 0, total: 0, message: 'Finding completed PDFs...' });
         try {
             const generations = await fetchCompletedOrderPdfsByDate(pdfDownloadDate);
-            const files = generations.flatMap(generation => {
-                const paths = Array.isArray(generation.storage_paths) && generation.storage_paths.length
-                    ? generation.storage_paths
-                    : generation.storage_path ? [generation.storage_path] : [];
-                return paths.map((path, index) => ({
-                    orderId: generation.order_id,
-                    path,
-                    part: index + 1,
-                    totalParts: paths.length,
-                }));
-            });
-            if (!files.length) {
+            if (!generations.length) {
                 setBulkPdfDownload({ running: false, completed: 0, total: 0, message: 'No completed PDFs found for this date.' });
                 return;
             }
 
-            setBulkPdfDownload({ running: true, completed: 0, total: files.length, message: 'Creating secure download links...' });
-            const signedUrls = [];
-            for (let start = 0; start < files.length; start += 100) {
-                signedUrls.push(...await createOrderPdfDownloadUrls(files.slice(start, start + 100).map(file => file.path)));
-            }
-
-            for (let index = 0; index < files.length; index += 1) {
-                const response = await fetch(signedUrls[index]);
-                if (!response.ok) throw new Error(`Could not download PDF ${index + 1} (HTTP ${response.status}).`);
-                const blob = await response.blob();
-                const file = files[index];
-                const suffix = file.totalParts > 1 ? `-part-${file.part}-of-${file.totalParts}` : '';
-                saveAs(blob, `order-${file.orderId}${suffix}.pdf`);
-                setBulkPdfDownload({ running: true, completed: index + 1, total: files.length, message: `Downloading ${index + 1} of ${files.length}...` });
-                await new Promise(resolve => window.setTimeout(resolve, 300));
-            }
-            setBulkPdfDownload({ running: false, completed: files.length, total: files.length, message: `Downloaded ${files.length} PDF file${files.length === 1 ? '' : 's'}.` });
+            const { filesDownloaded } = await downloadOrderPdfs(generations, {
+                createUrls: createOrderPdfDownloadUrls,
+                saveFile: saveAs,
+                recordDownloaded: markOrderPdfsDownloaded,
+                onProgress: ({ completed, total }) => setBulkPdfDownload({ running: true, completed, total, message: `Downloading ${completed} of ${total}...` }),
+                pause: () => new Promise(resolve => window.setTimeout(resolve, 300)),
+            });
+            setBulkPdfDownload({ running: false, completed: filesDownloaded, total: filesDownloaded, message: `Downloaded ${filesDownloaded} PDF file${filesDownloaded === 1 ? '' : 's'}.` });
         } catch (error) {
             console.error('Could not download PDFs by date:', error);
             setBulkPdfDownload(current => ({ ...current, running: false, message: error.message || 'PDF download failed.' }));
@@ -434,8 +426,10 @@ const OrderList = ({ orders, onSelectOrder, page, setPage, totalCount, pageSize,
                                 ) : !pdfGeneration ? (
                                     <span className="pdf-status-badge pdf-status-none">Not generated</span>
                                 ) : pdfGeneration.status === 'completed' ? (
-                                    <span className="pdf-status-badge pdf-status-ready" title={`${pdfGeneration.completed_parts || 1} PDF part(s) ready`}>
-                                        ✓ PDF ready
+                                    <span className="pdf-status-badge pdf-status-ready"
+                                        style={pdfGeneration.downloaded_at ? { background: 'rgba(59, 130, 246, 0.15)', color: '#93c5fd', borderColor: 'rgba(59, 130, 246, 0.35)' } : undefined}
+                                        title={pdfGeneration.downloaded_at ? `Downloaded ${formatDate(pdfGeneration.downloaded_at)} (Pacific)` : `${pdfGeneration.completed_parts || 1} PDF part(s) ready`}>
+                                        {pdfGeneration.downloaded_at ? '✓ PDF downloaded' : '✓ PDF ready'}
                                     </span>
                                 ) : pdfGeneration.status === 'processing' ? (
                                     <span className="pdf-status-badge pdf-status-processing">
