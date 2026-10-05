@@ -3,6 +3,7 @@ import { loadPartnerArtwork, partnerOrderRequest } from './partnerOrders';
 import { supabase, supabaseAdmin, getAdminAuthHeaders } from './supabaseClient';
 import { completeOlderOrders } from './completeOlderOrders.mjs';
 import { mergeAffiliateHistory } from './affiliateHistory.mjs';
+import { ORDER_PDFS_DOWNLOADED_EVENT } from './orderPdfDownloads.mjs';
 
 const ordersClient = supabaseAdmin;
 export const completeOrdersOlderThanTwoWeeks = async () => completeOlderOrders(
@@ -189,7 +190,7 @@ export const fetchPaidOrdersForBatcher = async () => {
 export const fetchOrderPdfGeneration = async (orderId) => {
     const { data, error } = await ordersClient
         .from('order_pdf_generations')
-        .select('order_id, status, storage_path, storage_paths, error_message, completed_at, total_cards, processed_cards, total_parts, completed_parts')
+        .select('order_id, status, storage_path, storage_paths, error_message, completed_at, downloaded_at, total_cards, processed_cards, total_parts, completed_parts')
         .eq('order_id', orderId)
         .maybeSingle();
     if (error) throw error;
@@ -211,7 +212,7 @@ export const fetchOrderPdfGenerations = async (orderIds) => {
     if (!orderIds.length) return [];
     const { data, error } = await ordersClient
         .from('order_pdf_generations')
-        .select('order_id, status, error_message, total_cards, processed_cards, total_parts, completed_parts')
+        .select('order_id, status, error_message, downloaded_at, total_cards, processed_cards, total_parts, completed_parts')
         .in('order_id', orderIds);
     if (error) throw error;
     return data || [];
@@ -261,7 +262,7 @@ export const fetchCompletedOrderPdfsByDate = async (date) => {
     for (let index = 0; index < orderIds.length; index += 200) {
         const { data, error } = await ordersClient
             .from('order_pdf_generations')
-            .select('order_id, storage_path, storage_paths, completed_at')
+            .select('order_id, status, storage_path, storage_paths, total_parts, completed_at, downloaded_at')
             .in('order_id', orderIds.slice(index, index + 200))
             .eq('status', 'completed')
             .order('completed_at', { ascending: true });
@@ -286,12 +287,21 @@ export const fetchNewOrderPdfs = async () => {
 };
 
 export const markOrderPdfsDownloaded = async (orderIds) => {
-    if (!orderIds.length) return;
-    const { error } = await ordersClient
+    const ids = [...new Set(orderIds)];
+    if (!ids.length) return [];
+    const downloadedAt = new Date().toISOString();
+    const { data, error } = await ordersClient
         .from('order_pdf_generations')
-        .update({ downloaded_at: new Date().toISOString(), updated_at: new Date().toISOString() })
-        .in('order_id', orderIds);
+        .update({ downloaded_at: downloadedAt, updated_at: downloadedAt })
+        .in('order_id', ids)
+        .eq('status', 'completed')
+        .select('order_id, downloaded_at');
     if (error) throw error;
+    if (ids.some(id => !data?.some(row => row.order_id === id && row.downloaded_at))) {
+        throw new Error('Download confirmation was not saved. Check your admin access and the PDF status.');
+    }
+    if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent(ORDER_PDFS_DOWNLOADED_EVENT));
+    return data;
 };
 
 /**
