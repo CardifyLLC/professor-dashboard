@@ -3,7 +3,8 @@ import PartnerOrderPanel from './PartnerOrderPanel';
 import { isPartnerOrder } from '../services/partnerArtwork.mjs';
 import { resolveOrderImage } from '../services/partnerOrders';
 import React, { useEffect, useState } from 'react';
-import { parseAddress, getOrderImageUrl, updateOrderCardData, updateOrderStatus, hasUploadedXml, downloadUploadedXml, rejectAndRefundOrder, fetchOrderPdfGeneration, createOrderPdfDownloadUrl, createOrderPdfDownloadUrls } from '../services/orderService';
+import { parseAddress, getOrderImageUrl, updateOrderCardData, updateOrderStatus, hasUploadedXml, downloadUploadedXml, rejectAndRefundOrder, fetchOrderPdfGeneration, createOrderPdfDownloadUrls, markOrderPdfsDownloaded } from '../services/orderService';
+import { downloadOrderPdfs } from '../services/orderPdfDownloads.mjs';
 import { ORDER_REJECTION_TEMPLATES, getRejectionTemplate } from '../constants/rejectionTemplates';
 import JSZip from 'jszip';
 import { saveAs } from 'file-saver';
@@ -376,34 +377,18 @@ const OrderDetail = ({ order, onClose, onOrderUpdated }) => {
     };
 
     const downloadGeneratedOrderPdf = async () => {
-        if (!orderPdf?.storage_path || orderPdf.status !== 'completed') return;
+        if (isDownloadingOrderPdf || orderPdf?.status !== 'completed') return;
         setIsDownloadingOrderPdf(true);
         try {
-            const storagePaths = Array.isArray(orderPdf.storage_paths) && orderPdf.storage_paths.length
-                ? orderPdf.storage_paths
-                : [orderPdf.storage_path];
-            if (storagePaths.length > 1) {
-                const signedUrls = await createOrderPdfDownloadUrls(storagePaths);
-                for (let index = 0; index < signedUrls.length; index += 1) {
-                    const signedUrl = signedUrls[index];
-                    const response = await fetch(signedUrl);
-                    if (!response.ok) {
-                        throw new Error(`Could not download a PDF part (HTTP ${response.status}).`);
-                    }
-                    const partBlob = await response.blob();
-                    saveAs(partBlob, `order-${orderId}-part-${index + 1}-of-${signedUrls.length}.pdf`);
-                    // Give the browser time to register each numbered download.
-                    await new Promise(resolve => window.setTimeout(resolve, 250));
-                }
-                return;
-            }
-            const signedUrl = await createOrderPdfDownloadUrl(storagePaths[0]);
-            const link = document.createElement('a');
-            link.href = signedUrl;
-            link.download = `order-${orderId}.pdf`;
-            document.body.appendChild(link);
-            link.click();
-            document.body.removeChild(link);
+            const { records } = await downloadOrderPdfs([orderPdf], {
+                createUrls: createOrderPdfDownloadUrls,
+                saveFile: saveAs,
+                recordDownloaded: markOrderPdfsDownloaded,
+                orderLabel: () => orderId,
+                pause: () => new Promise(resolve => window.setTimeout(resolve, 250)),
+            });
+            const saved = records.find(record => record.order_id === order.id);
+            setOrderPdf(current => current?.order_id === saved.order_id ? { ...current, downloaded_at: saved.downloaded_at } : current);
         } catch (error) {
             console.error('Could not download generated order PDF:', error);
             alert(error.message || 'Could not download this order PDF.');
@@ -485,7 +470,13 @@ const OrderDetail = ({ order, onClose, onOrderUpdated }) => {
                         )}
                     </div>
                     <div className="flex items-center gap-2">
-                        {orderPdf?.status === 'completed' && orderPdf.storage_path && (
+                        {orderPdf?.status === 'completed' && orderPdf.downloaded_at && (
+                            <span className="pdf-status-badge pdf-status-ready" role="status"
+                                title={`Downloaded ${new Date(orderPdf.downloaded_at).toLocaleString('en-US', { timeZone: 'America/Los_Angeles' })} (Pacific)`}>
+                                ✓ PDF downloaded
+                            </span>
+                        )}
+                        {orderPdf?.status === 'completed' && (orderPdf.storage_path || orderPdf.storage_paths?.length) && (
                             <button
                                 type="button"
                                 onClick={downloadGeneratedOrderPdf}
@@ -756,7 +747,7 @@ const OrderDetail = ({ order, onClose, onOrderUpdated }) => {
                                         </button>
                                         <button
                                             onClick={downloadAllImagesZip}
-                                            disabled={isDownloading}
+                                            disabled={isDownloading || (partnerOrder && !order.partnerArtwork?.ready)}
                                             type="button"
                                             className="download-zip-btn"
                                         >
