@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Building2, RefreshCw, ExternalLink, Download } from 'lucide-react';
 import { partnershipRequest } from '../services/partnerships';
+import { integrationUsage, partnerActivity } from '../services/partnerIntegration.mjs';
 import './PartnershipRequests.css';
 
 const count = value => value == null ? '—' : Number(value).toLocaleString('en-US');
@@ -28,6 +29,14 @@ function Analytics({ activity, commerce, compact = false, testMode = false }) {
       ['Pending payment', count(commerce?.pendingOrders)], ['Paid cards', count(commerce?.paidCards)],
       ['Carts submitted', count(activity?.carts)], ['Cart conversion', activity ? percent(activity.converted, activity.carts) : '—'],
     ]} />
+    {activity?.integrations ? <div className="partner-table-scroll"><table className="partner-revenue partner-integrations">
+      <caption>Integration usage · selected period and mode</caption>
+      <thead><tr><th>Integration</th><th>Carts</th><th>Converted carts</th><th>Production orders</th></tr></thead>
+      <tbody>{[['api', 'API'], ['widget', 'Widget'], ['unknown', 'Unknown']].map(([source, label]) => {
+        const value = activity.integrations[source];
+        return <tr key={source}><th>{label}</th><td>{count(value?.carts)}</td><td>{count(value?.converted)}</td><td>{count(value?.productionOrders)}</td></tr>;
+      })}</tbody>
+    </table></div> : <p className="partnership-hint">Integration source is unavailable. Deploy the partner analytics update to enable the breakdown.</p>}
     <details className="partner-analytics-details">
       <summary>{compact ? 'View partner analytics' : 'Revenue, customers and integration health'}</summary>
       {testMode && <p className="partnership-hint">Test keys create carts only; payments and manufacturing orders are disabled.</p>}
@@ -74,12 +83,14 @@ function PartnershipCard({ request, activity, commerce, analyticsReady, testMode
     finally { setSaving(false); }
   }
   const emailStatus = request.rejection_email?.status;
+  const usage = integrationUsage(activity?.integrations);
   return <article className="partnership-card">
     <div className="partnership-card-heading">
       <div><h2>{request.business_name}</h2><p>{request.full_name} · <a href={`mailto:${request.email}`}>{request.email}</a></p>{site && <a href={site} target="_blank" rel="noopener noreferrer">{request.website_url} <ExternalLink size={13} /></a>}</div>
       <div className="partner-card-actions"><span className={`partnership-badge ${rejected ? 'rejected' : request.status}`}>{rejected ? 'Rejected' : request.status === 'approved' ? 'Active' : 'Pending'}</span>{!rejected && <button className="partnership-decline" disabled={saving} onClick={() => setRejecting(true)}>Reject partner</button>}</div>
     </div>
     <p className="partnership-hint">Joined {date(request.created_at)} (Pacific)</p>
+    <p className="partner-integration-label">Integration <span className={`partnership-badge integration-${usage.kind}`}>{analyticsReady ? usage.label : 'Loading / unavailable'}</span><small>Selected period · {testMode ? 'Test' : 'Live'}</small></p>
     {rejected && <div className="partner-rejection"><strong>Rejection reason</strong><p>{request.api_block_reason || request.admin_notes || 'No reason recorded.'}</p><p>{request.access_revoked_at && `Rejected ${date(request.access_revoked_at)} (Pacific). `}Email: {emailStatus === 'sent' ? `sent ${date(request.rejection_email.attemptedAt)} (Pacific)` : emailStatus === 'failed' ? 'failed to send — check the partner app’s Gmail configuration' : 'no confirmed sending record'}.{emailStatus === 'sent' && ' Sending is confirmed by Gmail; inbox delivery is not tracked.'}</p></div>}
     {rejecting && !rejected && <form className="partner-reject-form" onSubmit={reject}>
       <label htmlFor={`reason-${request.id}`}>Reason for rejection (included in the email)</label>
@@ -123,12 +134,13 @@ export default function PartnershipRequests() {
   }
   function exportCsv() {
     const escape = value => `"${String(value ?? '').replace(/^[=+@\-\t\r]/, "'$&").replaceAll('"', '""')}"`;
-    const rows = [['Partner ID', 'Partner (this page)', 'Period', 'Mode', 'Carts', 'Converted carts', 'Production orders', 'Checkout orders', 'Paid orders', 'Pending orders', 'Paid cards', 'Unique paying customers', 'Repeat customers']];
+    const rows = [['Partner ID', 'Partner (this page)', 'Period', 'Mode', 'Carts', 'Converted carts', 'Production orders', 'Checkout orders', 'Paid orders', 'Pending orders', 'Paid cards', 'Unique paying customers', 'Repeat customers', 'Integration usage', 'API carts', 'Widget carts', 'Unknown source carts', 'API production orders', 'Widget production orders', 'Unknown source production orders']];
     const names = Object.fromEntries(data.requests.map(item => [item.id, item.business_name]));
     const ids = new Set([...Object.keys(analytics.partners), ...Object.keys(analytics.commerce?.partners || {})]);
     for (const id of ids) {
-      const a = analytics.partners[id] || blankActivity, c = analytics.commerce?.available ? analytics.commerce.partners[id] || blankCommerce : null;
-      rows.push([id, names[id] || id, period, mode, a.carts, a.converted, a.productionOrders, c?.orders, c?.paidOrders, c?.pendingOrders, c?.paidCards, c?.customers, c?.repeatCustomers]);
+      const a = partnerActivity(analytics, id, blankActivity), c = analytics.commerce?.available ? analytics.commerce.partners[id] || blankCommerce : null;
+      const sources = a.integrations;
+      rows.push([id, names[id] || id, period, mode, a.carts, a.converted, a.productionOrders, c?.orders, c?.paidOrders, c?.pendingOrders, c?.paidCards, c?.customers, c?.repeatCustomers, integrationUsage(sources).label, sources?.api.carts, sources?.widget.carts, sources?.unknown.carts, sources?.api.productionOrders, sources?.widget.productionOrders, sources?.unknown.productionOrders]);
     }
     const url = URL.createObjectURL(new Blob(['\uFEFF', rows.map(row => row.map(escape).join(',')).join('\r\n')], { type: 'text/csv;charset=utf-8' }));
     const link = document.createElement('a'); link.href = url; link.download = `partner-analytics-${mode}-${period}.csv`; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
@@ -138,8 +150,9 @@ export default function PartnershipRequests() {
     <header className="partnership-heading"><div><h1 className="page-title"><Building2 size={30} /> Partnerships</h1><p>Partners, API + widget performance, and access decisions.</p></div><button className="partnership-refresh" disabled={loading || statsLoading} onClick={() => setRevision(value => value + 1)}><RefreshCw size={16} /> Refresh</button></header>
     {notice && <div role="status" className={notice.sent ? 'partnership-success' : 'partnership-warning'}>{notice.text}</div>}
     <section className="partner-overview" aria-label="All partner analytics">
-      <div className="partner-toolbar"><h2>All partners</h2><label>Period<select value={period} onChange={event => setPeriod(event.target.value)}>{[['7', 'Last 7 days'], ['30', 'Last 30 days'], ['90', 'Last 90 days'], ['365', 'Last 365 days'], ['all', 'All time']].map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label><label>API mode<select value={mode} onChange={event => setMode(event.target.value)}><option value="live">Live</option><option value="test">Test</option></select></label><button disabled={!analytics} onClick={exportCsv}><Download size={16} /> Export CSV</button></div>
-      <p className="partnership-hint">API and widget orders are combined. Dates filter each record’s creation time; statuses reflect its current state. Conversion is the share of carts created in the period that reached a paid order, including later cancellations or holds. Active keys are current, regardless of date. Partner status filters below do not change these totals.</p>
+      <div className="partner-toolbar"><h2>All partners</h2><label>Period<select value={period} onChange={event => setPeriod(event.target.value)}>{[['7', 'Last 7 days'], ['30', 'Last 30 days'], ['90', 'Last 90 days'], ['365', 'Last 365 days'], ['all', 'All time']].map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label><label>Mode<select value={mode} onChange={event => setMode(event.target.value)}><option value="live">Live</option><option value="test">Test</option></select></label><button disabled={!analytics} onClick={exportCsv}><Download size={16} /> Export CSV</button></div>
+      <p className="partnership-hint">Integration badges and breakdowns use actual carts and production orders in the selected period and mode. Creating an API key alone does not count as usage. Widget means the standalone public-code widget; older server-connected widgets used the API and are counted there. Unknown means the source was not recorded reliably.</p>
+      <p className="partnership-hint">Checkout totals combine both integrations. The source breakdown counts orders received by production after payment; pending checkout orders are not included there. Dates filter each record’s creation time; statuses reflect its current state. Conversion is the share of carts created in the period that reached a paid order, including later cancellations or holds. Active keys are current, regardless of date. Partner status filters below do not change these totals.</p>
       {statsLoading ? <p role="status">Loading analytics…</p> : stats.error ? <p role="alert" className="partnership-error">{stats.error}</p> : analytics && <>
         {!analytics.commerce?.available && <p className="partnership-warning">{analytics.commerce?.error}</p>}
         {analytics.commerce?.unattributedOrders > 0 && <p className="partnership-warning">{count(analytics.commerce.unattributedOrders)} older orders have no partner ID. They are included in overall order totals but cannot be assigned to a partner.</p>}
@@ -150,7 +163,7 @@ export default function PartnershipRequests() {
     <nav className="partnership-filters" aria-label="Partner status">{[['all', 'All partners'], ['approved', 'Active'], ['rejected', 'Rejected'], ['pending', 'Pending']].map(([value, label]) => <button key={value} aria-pressed={status === value} className={status === value ? 'active' : ''} onClick={() => { setStatus(value); setPage(1); }}>{label}</button>)}</nav>
     {loading ? <p role="status" className="partnership-empty">Loading partners…</p> : loaded.error ? <p role="alert" className="partnership-error">{loaded.error}</p> : <>
       <p className="partnership-count">{count(data.total)} partner{data.total === 1 ? '' : 's'}</p>
-      <div className="partnership-list">{data.requests.map(request => <PartnershipCard key={`${request.id}:${request.updated_at}`} request={request} onSaved={saved} analyticsReady={Boolean(analytics)} testMode={mode === 'test'} activity={analytics ? analytics.partners[request.id] || blankActivity : null} commerce={analytics?.commerce?.available ? analytics.commerce.partners[request.id] || blankCommerce : null} />)}</div>
+      <div className="partnership-list">{data.requests.map(request => <PartnershipCard key={`${request.id}:${request.updated_at}`} request={request} onSaved={saved} analyticsReady={Boolean(analytics)} testMode={mode === 'test'} activity={partnerActivity(analytics, request.id, blankActivity)} commerce={analytics?.commerce?.available ? analytics.commerce.partners[request.id] || blankCommerce : null} />)}</div>
       {!data.requests.length && <p className="partnership-empty">No partners in this view.</p>}
       {pages > 1 && <div className="partnership-pagination"><button disabled={page <= 1} onClick={() => setPage(value => value - 1)}>Previous</button><span>Page {page} of {pages}</span><button disabled={page >= pages} onClick={() => setPage(value => value + 1)}>Next</button></div>}
     </>}
