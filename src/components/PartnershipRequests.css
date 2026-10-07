@@ -22,6 +22,13 @@
 .partnership-badge.pending { color: #fbbf24; background: #f59e0b20; }
 .partnership-badge.approved { color: #34d399; background: #10b98120; }
 .partnership-badge.rejected { color: #fca5a5; background: #ef444420; }
+.partner-integration-label { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; font-size: .85rem; }
+.partner-integration-label small { color: var(--partner-muted); }
+.partnership-badge.integration-api { color: #93c5fd; background: #3b82f620; }
+.partnership-badge.integration-widget { color: #c4b5fd; background: #8b5cf620; }
+.partnership-badge.integration-both { color: #5eead4; background: #14b8a620; }
+.partnership-badge.integration-unknown, .partnership-badge.integration-unavailable, .partnership-badge.integration-none { color: #cbd5e1; background: #64748b20; }
+.partner-integrations { margin: 8px 0 20px; }
 .partnership-page .partnership-decline { color: #fca5a5; background: #ef444410; border-color: #ef444480; }
 .partnership-hint { font-size: .8rem; margin: 12px 0; }
 .partner-toolbar { align-items: center; justify-content: flex-start; }
