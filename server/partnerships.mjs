@@ -1,9 +1,12 @@
+import { loadCommerceAnalytics } from './partner-analytics.mjs';
+
 class HttpError extends Error {
   constructor(status, message) { super(message); this.status = status; }
 }
 
 export function createPartnershipsHandler({ createClient, fetchImpl = fetch, env = process.env }) {
   return async (request, response) => {
+    const analyticsDeadline = Date.now() + 52000;
     response.setHeader('Content-Type', 'application/json');
     response.setHeader('Cache-Control', 'private, no-store');
     const send = (status, body) => { response.statusCode = status; response.end(JSON.stringify(body)); };
@@ -35,9 +38,11 @@ export function createPartnershipsHandler({ createClient, fetchImpl = fetch, env
       if (typeof body === 'string') {
         try { body = JSON.parse(body); } catch { throw new HttpError(400, 'Invalid JSON.'); }
       }
-      if (!body || !['list', 'review', 'revoke'].includes(body.action)) throw new HttpError(400, 'Unsupported partnership action.');
+      if (!body || !['list', 'analytics', 'review', 'revoke'].includes(body.action)) throw new HttpError(400, 'Unsupported partnership action.');
       const payload = body.action === 'list'
         ? { action: 'list', status: body.status ?? 'all', page: body.page ?? 1 }
+        : body.action === 'analytics'
+          ? { action: 'analytics', period: body.period ?? '30', mode: body.mode ?? 'live' }
         : body.action === 'revoke'
           ? { action: 'revoke', id: body.id, reason: body.reason, expectedUpdatedAt: body.expectedUpdatedAt }
           : { action: 'review', id: body.id, status: body.status, approvedPercentage: body.approvedPercentage, adminNotes: body.adminNotes, expectedUpdatedAt: body.expectedUpdatedAt };
@@ -52,6 +57,10 @@ export function createPartnershipsHandler({ createClient, fetchImpl = fetch, env
       if (result.status === 404) throw new HttpError(503, 'Deploy the updated partner app to enable partnership requests in this dashboard.');
       const data = await result.json();
       if (!result.ok) throw new HttpError(result.status, data.error?.message || 'Could not load or review partnership requests.');
+      if (body.action === 'analytics') {
+        if (!data.window || !data.total || !data.partners) throw new HttpError(503, 'Deploy the partner analytics update on the partner app first.');
+        data.commerce = await loadCommerceAnalytics(db, data.window, analyticsDeadline);
+      }
       return send(200, data);
     } catch (error) {
       return send(error instanceof HttpError ? error.status : 502, {
