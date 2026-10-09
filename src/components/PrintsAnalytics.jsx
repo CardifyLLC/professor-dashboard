@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Activity, Coins, Gift, RefreshCw, RotateCcw, ShoppingCart, Users } from 'lucide-react';
 import { getAdminAuthHeaders } from '../services/supabaseClient';
+import PrintPackagePurchases from './PrintPackagePurchases';
 
 const fmt = (value) => Number(value || 0).toLocaleString();
 const labels = {
@@ -51,6 +52,21 @@ export default function PrintsAnalytics() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [packages, setPackages] = useState(null);
+  const [packageError, setPackageError] = useState('');
+  const [packagesLoading, setPackagesLoading] = useState(true);
+
+  const loadPackages = useCallback(async () => {
+    setPackagesLoading(true); setPackageError('');
+    try {
+      const headers = await getAdminAuthHeaders();
+      const response = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/stripe-analytics?days=all`, { headers });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || 'Could not load package purchases.');
+      setPackages(result.print_packages || null);
+    } catch (loadError) { setPackages(null); setPackageError(loadError.message); }
+    finally { setPackagesLoading(false); }
+  }, []);
 
   const load = useCallback(async () => {
     setLoading(true); setError('');
@@ -66,16 +82,18 @@ export default function PrintsAnalytics() {
   }, []);
 
   useEffect(() => { void load(); }, [load]);
+  useEffect(() => { void loadPackages(); }, [loadPackages]);
   const summary = data?.summary || {};
 
   return <div>
     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '14px', marginBottom: '22px' }}>
       <div><h1 className="page-title" style={{ marginBottom: '5px' }}>PRINTS Analytics</h1><p style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>Wallet circulation, credits, grants, rewards, and spending.</p></div>
-      <button onClick={() => void load()} disabled={loading} style={{ display: 'flex', alignItems: 'center', gap: '7px', padding: '9px 14px', borderRadius: '8px', border: '1px solid var(--border-color)', background: 'var(--bg-card)', color: 'var(--text-primary)', cursor: loading ? 'wait' : 'pointer' }}>
+      <button onClick={() => { void load(); void loadPackages(); }} disabled={loading || packagesLoading} style={{ display: 'flex', alignItems: 'center', gap: '7px', padding: '9px 14px', borderRadius: '8px', border: '1px solid var(--border-color)', background: 'var(--bg-card)', color: 'var(--text-primary)', cursor: loading ? 'wait' : 'pointer' }}>
         <RefreshCw size={15} className={loading ? 'spin' : ''} /> Refresh
       </button>
     </div>
     {error && <div style={{ padding: '14px', marginBottom: '18px', border: '1px solid #ef4444', borderRadius: '9px', background: '#ef444420', color: '#ef4444' }}>{error}</div>}
+    <PrintPackagePurchases data={packages} loading={packagesLoading} error={packageError} />
     {loading && !data ? <div className="loading">Loading PRINTS data...</div> : data && <>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))', gap: '12px', marginBottom: '18px' }}>
         <StatCard icon={Coins} title="In circulation" value={summary.circulation} note="Available across active wallets" color="#f59e0b" />
@@ -90,7 +108,7 @@ export default function PrintsAnalytics() {
         <strong style={{ color: 'var(--text-primary)' }}>Ledger reconciliation:</strong> {fmt(summary.totalIssued)} total issued − {fmt(summary.used)} used − {fmt(summary.removed)} otherwise removed = {fmt(Number(summary.totalIssued || 0) - Number(summary.used || 0) - Number(summary.removed || 0))} net ledger PRINTS. Current active-wallet circulation is {fmt(summary.circulation)}, with {fmt(summary.reserved)} additionally reserved.
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(500px, 1fr))', gap: '16px', marginBottom: '20px' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 500px), 1fr))', gap: '16px', marginBottom: '20px' }}>
         <Breakdown title="Breakdown by transaction type" rows={data.byType} />
         <Breakdown title="Breakdown by source" rows={data.bySource} />
       </div>
