@@ -1,0 +1,18 @@
+.print-purchases { min-width: 0; margin: 24px 0; border-top: 1px solid var(--border-color); padding-top: 20px; }
+.print-purchases-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }
+.print-purchases h2 { margin: 0; font-size: 18px; letter-spacing: 0; }
+.print-purchases-heading span, .print-purchases small { color: var(--text-muted); font-size: 12px; }
+.print-purchases small { display: block; margin-top: 4px; }
+.print-purchases p { color: var(--text-muted); font-size: 14px; }
+.print-purchases .print-purchases-error { color: #ef4444; }
+.print-purchases-totals > div { display: flex; flex-wrap: wrap; gap: 12px 24px; margin-bottom: 16px; font-size: 14px; }
+.print-purchases-totals b { margin-left: 6px; }
+.print-purchases-search { display: flex; gap: 8px; align-items: center; border: 1px solid var(--border-color); border-radius: 6px; padding: 8px 12px; width: min(100%, 420px); box-sizing: border-box; margin-bottom: 16px; color: var(--text-muted); }
+.print-purchases-search input { width: 100%; min-width: 0; border: 0; background: transparent; color: var(--text-primary); font-size: 14px; outline: none; }
+.print-purchases-search:focus-within { outline: 2px solid var(--accent-primary); }
+.print-purchases-scroll { max-width: 100%; overflow-x: auto; }
+.print-purchases table { min-width: 950px; width: 100%; }
+.print-purchases-reference { max-width: 200px; overflow-wrap: anywhere; font-family: monospace; font-size: 11px; }
+.print-purchases-pagination { display: flex; align-items: center; justify-content: flex-end; gap: 8px; margin-top: 12px; font-size: 13px; }
+.print-purchases-pagination button { display: grid; place-items: center; width: 32px; height: 32px; border-radius: 6px; border: 1px solid var(--border-color); background: var(--bg-card); color: var(--text-primary); cursor: pointer; }
+.print-purchases-pagination button:disabled { opacity: .4; cursor: default; }
