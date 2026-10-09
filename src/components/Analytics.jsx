@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { getAdminAuthHeaders, supabase } from '../services/supabaseClient';
 import { ORDER_REJECTION_TEMPLATES } from '../constants/rejectionTemplates';
+import PrintPackagePurchases from './PrintPackagePurchases';
 
 // ── Formatters ────────────────────────────────────────────────────────────────
 const fmt$ = (cents) =>
@@ -546,6 +547,8 @@ const Analytics = ({ orders, onRefreshOrders, refreshingOrders = false }) => {
                 <StatCard label="Cancelled" value={fmtNum(om.cancelled)} sub="Order workflow" color="#ef4444" />
                 <StatCard label="Total Cards" value={fmtNum(om.totalCards)} sub="Order workflow" />
             </div>
+
+            <PrintPackagePurchases data={stripeAnalytics?.print_packages} loading={stripeLoading} error={stripeError} />
 
             {/* ── Charts row ── */}
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '1.25rem', marginBottom: '1.25rem' }}>
