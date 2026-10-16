@@ -19,6 +19,7 @@ import AffiliateOrders from './AffiliateOrders';
 import SharedDeckRequests from './SharedDeckRequests';
 import PrintsAnalytics from './PrintsAnalytics';
 import EmailCampaignHistory from './EmailCampaignHistory';
+import ShipmentTracking from './ShipmentTracking';
 
 const Dashboard = () => {
     const [orders, setOrders] = useState([]);
@@ -208,6 +209,14 @@ const Dashboard = () => {
                             >
                                 <span>📦</span> Orders
                             </div>
+                            <button
+                                type="button"
+                                className={`nav-item ${activeView === 'shipment-tracking' ? 'active' : ''}`}
+                                onClick={() => { setActiveView('shipment-tracking'); setMobileMenuOpen(false); }}
+                                style={{ width: '100%', font: 'inherit', textAlign: 'left' }}
+                            >
+                                <span>🚚</span> Shipment tracking
+                            </button>
                             <div
                                 className={`nav-item ${activeView === 'customers' ? 'active' : ''}`}
                                 onClick={() => { setActiveView('customers'); setMobileMenuOpen(false); }}
@@ -483,6 +492,10 @@ const Dashboard = () => {
 
                                     {activeView === 'email-history' && (
                                         <EmailCampaignHistory />
+                                    )}
+
+                                    {activeView === 'shipment-tracking' && (
+                                        <ShipmentTracking onSelectOrder={handleSelectOrder} />
                                     )}
 
                                     {activeView === 'prints-analytics' && (

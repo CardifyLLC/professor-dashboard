@@ -462,6 +462,9 @@ const OrderDetail = ({ order, onClose, onOrderUpdated }) => {
                 <div className="modal-header">
                     <div>
                         <h2>Order #{orderId}</h2>
+                        <small style={{ display: 'block', overflowWrap: 'anywhere', color: 'var(--text-muted)', marginTop: '6px' }}>
+                            Full order ID for shipping: <code style={{ userSelect: 'all' }}>{order.id}</code>
+                        </small>
                         {partnerOrder && <PartnerOrderPanel order={order} onOrderUpdated={onOrderUpdated}/> }
                         {xmlTaggedCount > 0 && (
                             <div style={{ marginTop: '0.35rem', fontSize: '0.875rem', fontWeight: 600, color: '#60a5fa' }}>
