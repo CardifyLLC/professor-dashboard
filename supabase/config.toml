@@ -27,3 +27,7 @@ verify_jwt = false
 
 [functions.trigger-order-pdf-workflow]
 verify_jwt = false
+
+# Authenticated in the function via requireAdmin; no public send access.
+[functions.shipment-tracking]
+verify_jwt = false
