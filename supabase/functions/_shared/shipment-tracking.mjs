@@ -1,7 +1,7 @@
 // Shared by the CSV review screen and the authenticated Edge Function.
 export const MAX_CSV_ROWS = 500;
 export const MAX_CSV_BYTES = 2 * 1024 * 1024;
-export const CARRIERS = ['USPS', 'UPS', 'FedEx', 'DHL'];
+export const CARRIERS = ['USPS', 'UPS', 'FedEx', 'DHL', 'Asendia'];
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export function parseTrackingCsv(source) {
@@ -70,6 +70,7 @@ export function referenceType(value) {
 
 export function normalizeCarrier(value) {
   const text = String(value || '').trim();
+  if (/\bAsendia\b|Simple Export Rate/i.test(text)) return 'Asendia';
   if (/\bUSPS\b|United States Postal/i.test(text)) return 'USPS';
   if (/\bUPS\b|United Parcel/i.test(text)) return 'UPS';
   if (/\bFedEx\b|Federal Express/i.test(text)) return 'FedEx';
@@ -91,6 +92,7 @@ export function normalizeShipment(input = {}) {
   if (!referenceType(reference)) return { row, error: 'Enter the full TCGPlaytest order ID (UUID), saved Stripe Checkout session ID, or tempOrderId. Email is not an order ID.' };
   if (/^[-+]?\d+(?:\.\d+)?e[-+]?\d+$/i.test(rawTracking) || !/^[A-Z0-9]{8,40}$/.test(tracking)) return { row, error: 'Invalid tracking number. Use the original CSV; spreadsheet rounding or scientific notation cannot be recovered.' };
   if (!carrier) return { row, error: 'Select a carrier or map a Carrier / Service column.' };
+  if (tracking.startsWith('AHOY') && carrier !== 'Asendia') return { row, error: 'AHOY tracking uses Asendia (Pirate Ship Simple Export Rate). Select Asendia for this shipment.' };
   if (email && !validEmail(email)) return { row, error: 'The CSV email is invalid. Check the column mapping.' };
   return { row, error: null };
 }
@@ -102,6 +104,7 @@ export function trackingUrl(carrier, tracking) {
     UPS: `https://www.ups.com/track?tracknum=${id}`,
     FedEx: `https://www.fedex.com/fedextrack/?trknbr=${id}`,
     DHL: `https://www.dhl.com/global-en/home/tracking.html?tracking-id=${id}`,
+    Asendia: `https://a1.asendiausa.com/tracking/?trackingnumber=${id}`,
   };
   return urls[carrier];
 }
