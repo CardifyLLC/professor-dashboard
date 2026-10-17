@@ -67,9 +67,11 @@ export function createShipmentTrackingHandler({ requireAdmin, repository, mailer
         const page = await repository.findOrdersByEmail(email, offset);
         // Suggestions never become a selected order. Sending still requires an exact
         // reference, reviewed snapshot and an atomic claim, just like CSV imports.
-        const orders = page.orders.filter((order) => order.customer_email?.toLowerCase() === email).map((order) => {
+        const matching = page.orders.filter((order) => order.customer_email?.toLowerCase() === email);
+        const notified = new Set(await repository.notifiedOrderIds(matching.map((order) => order.id)));
+        const orders = matching.map((order) => {
           const reason = orderProblem(order, { email });
-          return { ...order, eligible: !reason, reason };
+          return { ...order, eligible: !reason, reason, tracking_notified: notified.has(order.id) };
         });
         return json(200, { orders, nextOffset: page.nextOffset });
       }

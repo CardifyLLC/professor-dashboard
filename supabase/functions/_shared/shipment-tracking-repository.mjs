@@ -48,6 +48,26 @@ export function createTrackingRepository({ url, serviceKey, fetchImpl = fetch })
       const results = await Promise.all(groups.map((field) => lookup('orders', field, references.filter((value) => referenceType(value) === field), ORDER_FIELDS)));
       return [...new Map(results.flat().map((row) => [row.id, row])).values()];
     },
+    async notifiedOrderIds(orderIds) {
+      const notified = new Set();
+      for (let offset = 0; offset < orderIds.length; offset += 50) {
+        const ids = orderIds.slice(offset, offset + 50);
+        let after;
+        // Read durable successful receipts, not the latest-100 history panel.
+        // Keyset pagination also covers orders with many separate packages.
+        while (true) {
+          const rows = await rest('shipment_tracking_notifications', {
+            select: 'id,order_id', status: 'eq.accepted',
+            order_id: `in.(${ids.join(',')})`, order: 'id.asc', limit: '500',
+            ...(after ? { id: `gt.${after}` } : {}),
+          });
+          rows.forEach((row) => notified.add(row.order_id));
+          if (rows.length < 500 || ids.every((id) => notified.has(id))) break;
+          after = rows.at(-1).id;
+        }
+      }
+      return [...notified];
+    },
     lookupNotifications: (values) => lookup('shipment_tracking_notifications', 'tracking_number', values, NOTIFICATION_FIELDS),
     history: () => rest('shipment_tracking_notifications', { select: NOTIFICATION_FIELDS, order: 'created_at.desc', limit: '100' }),
     claim: (orderId, shipment, expected, actor) => rest('rpc/claim_shipment_tracking_notification', {}, {
