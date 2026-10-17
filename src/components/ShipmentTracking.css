@@ -19,6 +19,7 @@
 .shipment-tracking .st-mappings label { font-size:13px; font-weight:600; }
 .shipment-tracking .st-mappings select { display:block; width:100%; margin-top:8px; }
 .shipment-tracking .st-manual { margin:16px 0; }
+.shipment-tracking .st-notified-filter { display:flex; align-items:center; gap:10px; }
 .shipment-tracking .st-shipment-choice { padding:18px; margin:16px 0; border:1px solid var(--border-color); border-radius:10px; }
 .shipment-tracking .st-shipment-choice h3 { margin:0; font-size:15px; overflow-wrap:anywhere; }
 .shipment-tracking .st-choice-controls { display:flex; align-items:flex-end; flex-wrap:wrap; gap:12px; }

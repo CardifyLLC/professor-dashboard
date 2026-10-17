@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Upload, Truck, Send, RefreshCw } from 'lucide-react';
-import { suggestColumns, normalizeShipment, validEmail, CARRIERS } from '../../supabase/functions/_shared/shipment-tracking.mjs';
+import { suggestColumns, normalizeShipment, validEmail } from '../../supabase/functions/_shared/shipment-tracking.mjs';
 import { trackingRequest } from '../services/shipmentTracking';
 import { readTrackingFile } from '../services/shipmentTrackingFile';
 import './ShipmentTracking.css';
 
 const formatDate = (value) => value ? new Date(value).toLocaleString() : '—';
-const orderOption = (order) => `#${order.id.slice(0, 8)} · ${formatDate(order.created_at)} · ${order.quantity} cards · ${order.design_name || order.uploaded_xml_filename || 'Card order'} · ${order.eligible ? order.status : order.reason || `${order.status} / ${order.payment_status}`}`;
+const orderOption = (order) => `#${order.id.slice(0, 8)} · ${formatDate(order.created_at)} · ${order.quantity} cards · ${order.design_name || order.uploaded_xml_filename || 'Card order'} · ${order.eligible ? order.status : order.reason || `${order.status} / ${order.payment_status}`}${order.tracking_notified ? ' · Tracking already sent' : ''}`;
 const destination = (order) => {
   let source = order?.shipping_address || {};
   if (typeof source === 'string') { try { source = JSON.parse(source); } catch { return source; } }
@@ -18,10 +18,9 @@ export default function ShipmentTracking({ onSelectOrder }) {
   const [csv, setCsv] = useState(null);
   const [filename, setFilename] = useState('');
   const [mapping, setMapping] = useState({ reference: '', tracking: '', carrier: '', email: '' });
-  const [defaultCarrier, setDefaultCarrier] = useState('');
   const [references, setReferences] = useState({});
-  const [carriers, setCarriers] = useState({});
   const [candidates, setCandidates] = useState({});
+  const [showNotified, setShowNotified] = useState(false);
   const [results, setResults] = useState([]);
   const [selected, setSelected] = useState(new Set());
   const [confirmed, setConfirmed] = useState(false);
@@ -62,7 +61,7 @@ export default function ShipmentTracking({ onSelectOrder }) {
     event.target.value = '';
     if (!file || active.current) return;
     active.current = true;
-    invalidate(); setCsv(null); setFilename(''); setReferences({}); setCarriers({}); setCandidates({}); setDefaultCarrier(''); setPhase('read');
+    invalidate(); setCsv(null); setFilename(''); setReferences({}); setCandidates({}); setShowNotified(false); setPhase('read');
     try {
       const parsed = await readTrackingFile(file);
       if (mounted.current) { setCsv(parsed); setMapping(suggestColumns(parsed.headers)); setFilename(file.name); }
@@ -72,7 +71,7 @@ export default function ShipmentTracking({ onSelectOrder }) {
 
   const mappedRows = () => csv.rows.map((values, index) => {
     const read = (field) => mapping[field] === '' ? '' : values[Number(mapping[field])];
-    return { reference: references[index] ?? read('reference'), tracking: read('tracking'), carrier: carriers[index] ?? (read('carrier') || defaultCarrier), email: read('email') };
+    return { reference: references[index] ?? read('reference'), tracking: read('tracking'), carrier: read('carrier'), email: read('email') };
   });
 
   const findOrders = async (index, more = false) => {
@@ -95,6 +94,12 @@ export default function ShipmentTracking({ onSelectOrder }) {
 
   const selectOrder = (index, id) => { invalidate(); setReferences((current) => ({ ...current, [index]: id })); };
 
+  const markNotified = (orderIds) => {
+    setCandidates((current) => Object.fromEntries(Object.entries(current).map(([index, matches]) => [index, {
+      ...matches, orders: matches.orders?.map((order) => orderIds.has(order.id) ? { ...order, tracking_notified: true } : order),
+    }])));
+  };
+
   const review = async () => {
     if (active.current) return;
     active.current = true; stop.current = false;
@@ -109,7 +114,11 @@ export default function ShipmentTracking({ onSelectOrder }) {
         const data = await trackingRequest({ action: 'preview', rows: rows.slice(offset, offset + 100) });
         next.push(...data.results.map((result) => trackingCounts.get(result.row.tracking) > 1 ? { ...result, status: 'blocked', message: 'Duplicate tracking number in this file. Keep one verified row and upload again.' } : result));
       }
-      if (mounted.current && !stop.current) { setResults(next); setProgress(`${next.filter((item) => item.status === 'ready').length} ready to review out of ${rows.length} shipments.`); }
+      if (mounted.current && !stop.current) {
+        setResults(next);
+        markNotified(new Set(next.filter((item) => item.status === 'accepted').map((item) => item.order.id)));
+        setProgress(`${next.filter((item) => item.status === 'ready').length} ready to review out of ${rows.length} shipments.`);
+      }
     } catch (err) { if (mounted.current) setError(err.message); }
     finally { active.current = false; if (mounted.current) setPhase(''); }
   };
@@ -134,6 +143,10 @@ export default function ShipmentTracking({ onSelectOrder }) {
         if (mounted.current) {
           setResults((current) => current.map((value, rowIndex) => rowIndex === index ? { ...value, status: result.status, message: result.message } : value));
           setSelected((current) => { const next = new Set(current); next.delete(index); return next; });
+          if (result.status === 'accepted') {
+            markNotified(new Set([item.order.id]));
+            setReferences((current) => ({ ...current, [index]: '' }));
+          }
         }
         completed++;
         // Stop the batch if delivery is uncertain or Gmail rejects a message.
@@ -161,30 +174,34 @@ export default function ShipmentTracking({ onSelectOrder }) {
       <label className="st-upload"><Upload size={20} /><span>{filename || 'Choose Pirate Ship CSV or Excel'}<small>CSV or .xlsx · up to 500 shipments · 2 MB</small></span><input type="file" accept=".csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" disabled={busy} onChange={upload} /></label>
       {csv && <>
         <div className="st-mappings">
-          {Object.entries({ reference: 'Order ID column', tracking: 'Tracking number column', carrier: 'Carrier / Service column', email: 'Email column (search and cross-check)' }).map(([field, label]) => <label key={field}>{label}<select aria-label={label} value={mapping[field]} disabled={busy} onChange={(event) => { invalidate(); setReferences({}); setCarriers({}); setCandidates({}); setMapping((value) => ({ ...value, [field]: event.target.value })); }}><option value="">{field === 'reference' ? 'Choose orders below' : field === 'tracking' ? 'Choose a column' : 'Not included'}</option>{csv.headers.map((header, index) => <option key={index} value={String(index)}>{header}</option>)}</select></label>)}
-          <label>Carrier for rows with no carrier<select aria-label="Carrier for rows with no carrier" value={defaultCarrier} disabled={busy} onChange={(event) => { invalidate(); setDefaultCarrier(event.target.value); }}><option value="">Choose when needed</option>{CARRIERS.map((carrier) => <option key={carrier}>{carrier}</option>)}</select></label>
+          {Object.entries({ reference: 'Order ID column', tracking: 'Tracking number column', email: 'Email column (search and cross-check)' }).map(([field, label]) => <label key={field}>{label}<select aria-label={label} value={mapping[field]} disabled={busy} onChange={(event) => { invalidate(); setReferences({}); setCandidates({}); setMapping((value) => ({ ...value, [field]: event.target.value })); }}><option value="">{field === 'reference' ? 'Choose orders below' : field === 'tracking' ? 'Choose a column' : 'Not included'}</option>{csv.headers.map((header, index) => <option key={index} value={String(index)}>{header}</option>)}</select></label>)}
         </div>
-        <details className="st-manual" open={mapping.reference === '' ? true : undefined}><summary>2. Choose orders and carriers ({csv.rows.length} shipments)</summary><p>Compare the order date, design, card count and delivery address. Each shipment has its own selection, even when several rows use the same email. A single suggested order still requires your choice.</p>
+        <details className="st-manual" open={mapping.reference === '' ? true : undefined}><summary>2. Choose orders ({csv.rows.length} shipments)</summary><p>Compare the order date, design, card count and delivery address. Each shipment has its own selection, even when several rows use the same email. A single suggested order still requires your choice.</p>
+          <label className="st-notified-filter"><input type="checkbox" checked={showNotified} disabled={busy} onChange={(event) => setShowNotified(event.target.checked)} /> Show previously notified orders (for extra packages)</label>
+          <p>Orders with a successfully sent tracking email are hidden by default. Failed sends remain available to retry.</p>
           {mappedRows().map((row, index) => {
             const matches = candidates[index];
             const chosenOrder = matches?.orders?.find((order) => order.id === row.reference);
+            // Preserve an explicit selection for another package while filtering new choices.
+            const visibleOrders = (matches?.orders || []).filter((order) => showNotified || !order.tracking_notified || order.id === row.reference);
+            const hiddenCount = (matches?.orders?.length || 0) - visibleOrders.length;
             return <article className="st-shipment-choice" key={index}>
               <h3>Shipment {index + 1} · <code>{row.tracking || 'No tracking number'}</code></h3>
               <p>{row.email || 'No email column selected'}{csv.headers.map((header, column) => /^(recipient|created date|batch)$/i.test(header) && csv.rows[index][column] ? <small key={column}>{header}: {csv.rows[index][column]}</small> : null)}</p>
               <div className="st-choice-controls">
                 <label>Choose customer’s order<select aria-label={`Order for shipment ${index + 1}`} value={row.reference} disabled={busy && !matches?.loading} onFocus={() => { if (!matches && validEmail(row.email.trim())) findOrders(index); }} onChange={(event) => selectOrder(index, event.target.value)}>
-                  <option value="">{matches?.loading ? 'Finding matching orders…' : matches?.orders?.length === 0 ? 'No matching orders found' : 'Choose an order…'}</option>
+                  <option value="">{matches?.loading ? 'Finding matching orders…' : matches?.orders?.length === 0 ? 'No matching orders found' : matches && visibleOrders.length === 0 ? 'No unnotified orders on this page' : 'Choose an order…'}</option>
                   {row.reference && !chosenOrder && <option value={row.reference}>Imported / entered reference: {row.reference}</option>}
-                  {(matches?.orders || []).map((order) => <option key={order.id} value={order.id} disabled={!order.eligible || matches.loading}>{orderOption(order)}</option>)}
+                  {visibleOrders.map((order) => <option key={order.id} value={order.id} disabled={!order.eligible || matches.loading}>{orderOption(order)}</option>)}
                 </select></label>
-                <label>Carrier for this shipment<select aria-label={`Carrier for shipment ${index + 1}`} value={carriers[index] ?? ''} disabled={busy} onChange={(event) => { invalidate(); setCarriers((current) => { const next = { ...current }; if (event.target.value) next[index] = event.target.value; else delete next[index]; return next; }); }}><option value="">{row.carrier ? `Use ${row.carrier}` : 'Choose carrier'}</option>{CARRIERS.map((carrier) => <option key={carrier}>{carrier}</option>)}</select></label>
                 <button disabled={busy || !validEmail(row.email.trim())} onClick={() => findOrders(index)} aria-label={`Find orders for shipment ${index + 1}`}>{matches?.loading ? 'Finding orders…' : 'Find orders by email'}</button>
               </div>
               {matches?.error && <p className="st-error" role="alert">{matches.error}</p>}
+              {hiddenCount > 0 && <p>{hiddenCount} previously notified {hiddenCount === 1 ? 'order hidden' : 'orders hidden'}. Enable “Show previously notified orders” for an extra package{matches.nextOffset != null ? ', or load older orders below' : ''}.</p>}
               {matches?.orders?.length === 0 && <p>No matching orders found. Check the email or enter the full order ID manually.</p>}
               {matches?.nextOffset != null && <button disabled={busy} onClick={() => findOrders(index, true)}>Load older orders for shipment {index + 1}</button>}
               {chosenOrder && <div className="st-candidate st-chosen" aria-label={`Selected order details for shipment ${index + 1}`}>
-                <span><strong>{chosenOrder.design_name || chosenOrder.uploaded_xml_filename || 'Card order'} · {chosenOrder.quantity} cards</strong><code>{chosenOrder.id}</code><small>{formatDate(chosenOrder.created_at)} · {chosenOrder.status} / {chosenOrder.payment_status}</small><small>{chosenOrder.customer_name} · {chosenOrder.customer_email}</small><small>{destination(chosenOrder) || 'No saved delivery address'}</small>{chosenOrder.reason && <small className="st-ineligible">{chosenOrder.reason}</small>}</span>
+                <span><strong>{chosenOrder.design_name || chosenOrder.uploaded_xml_filename || 'Card order'} · {chosenOrder.quantity} cards</strong><code>{chosenOrder.id}</code><small>{formatDate(chosenOrder.created_at)} · {chosenOrder.status} / {chosenOrder.payment_status}</small><small>{chosenOrder.customer_name} · {chosenOrder.customer_email}</small><small>{destination(chosenOrder) || 'No saved delivery address'}</small>{chosenOrder.tracking_notified && <small>Tracking already sent. Select this order only for an additional package.</small>}{chosenOrder.reason && <small className="st-ineligible">{chosenOrder.reason}</small>}</span>
               </div>}
               <details className="st-reference-entry"><summary>Enter an order reference manually</summary><label>Order ID / saved checkout reference<input aria-label={`Order ID for shipment ${index + 1}`} value={row.reference} disabled={busy} onChange={(event) => selectOrder(index, event.target.value)} /></label></details>
             </article>;
@@ -200,7 +217,7 @@ export default function ShipmentTracking({ onSelectOrder }) {
       <div className="st-table-wrap"><table><thead><tr><th><input type="checkbox" aria-label="Select all ready shipments" checked={ready.length > 0 && ready.every((index) => selected.has(index))} disabled={busy || !ready.length} onChange={(event) => { setSelected(event.target.checked ? new Set(ready) : new Set()); setConfirmed(false); }} /></th><th>Order / customer</th><th>Shipment</th><th>Review</th></tr></thead><tbody>{results.map((result, index) => <tr key={index}>
         <td><input type="checkbox" aria-label={`Select shipment ${index + 1}`} checked={selected.has(index)} disabled={busy || result.status !== 'ready'} onChange={() => toggle(index)} /></td>
         <td>{result.order ? <><button className="st-order-link" onClick={() => onSelectOrder(result.order)} disabled={busy}>{result.order.id}</button><strong>{result.order.customer_name || 'Customer'}</strong><span>{result.order.customer_email}</span><small>{formatDate(result.order.created_at)} · {result.order.quantity} cards</small><small>{destination(result.order)}</small>{(result.order.design_name || result.order.uploaded_xml_filename) && <small>{result.order.design_name || result.order.uploaded_xml_filename}</small>}</> : <code>{result.row.reference || 'No order ID'}</code>}</td>
-        <td><strong>{result.row.carrier || 'No carrier'}</strong><code>{result.row.tracking}</code><small>Shipment {index + 1}</small></td>
+        <td>{result.row.carrier && <strong>{result.row.carrier}</strong>}<code>{result.row.tracking}</code><small>Shipment {index + 1}</small></td>
         <td><b className={`st-status st-${result.status}`}>{result.status === 'accepted' ? 'Accepted by Gmail' : result.status}</b><p>{result.message}</p>{result.email && <details><summary>Preview email</summary><strong>To: {result.email.to}</strong><small>{result.email.subject}</small><pre>{result.email.text}</pre></details>}</td>
       </tr>)}</tbody></table></div>
       <div className="st-send"><label><input type="checkbox" checked={confirmed} disabled={busy || !selected.size} onChange={(event) => setConfirmed(event.target.checked)} /> I checked the selected orders, customers and tracking numbers.</label><button className="st-primary" onClick={send} disabled={busy || !confirmed || !selected.size}><Send size={17} /> Send {selected.size} tracking {selected.size === 1 ? 'email' : 'emails'}</button>{phase === 'send' && <button onClick={() => { stop.current = true; setProgress('Stopping after the current shipment…'); }}>Stop after current shipment</button>}</div>
