@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { getAdminAuthHeaders, supabaseAdmin } from '../services/supabaseClient';
 import { buildGrantEmail, sendBulkEmailCampaign } from '../services/bulkEmailCampaign';
+import OrderTracking from './OrderTracking';
 
 const formatCurrency = (cents) =>
   new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format((cents || 0) / 100);
@@ -604,7 +605,7 @@ const Profiles = () => {
                       <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.825rem' }}>
                         <thead>
                           <tr style={{ borderBottom: '1px solid var(--border-color)' }}>
-                            {['Order ID', 'Date', 'Cards', 'Amount', 'Status'].map((h) => (
+                            {['Order ID', 'Date', 'Cards', 'Amount', 'Status', 'Tracking'].map((h) => (
                               <th key={h} style={{ textAlign: 'left', padding: '6px 10px', color: 'var(--text-muted)', fontWeight: '600', fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{h}</th>
                             ))}
                           </tr>
@@ -627,6 +628,7 @@ const Profiles = () => {
                                   {order.status}
                                 </span>
                               </td>
+                              <td style={{ padding: '8px 10px' }}><OrderTracking orderId={order.id} /></td>
                             </tr>
                           ))}
                         </tbody>

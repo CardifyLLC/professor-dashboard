@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Upload, Truck, Send, RefreshCw } from 'lucide-react';
+import { Upload, Truck, Send, Save, RefreshCw } from 'lucide-react';
 import { suggestColumns, normalizeShipment, validEmail } from '../../supabase/functions/_shared/shipment-tracking.mjs';
 import { trackingRequest } from '../services/shipmentTracking';
 import { readTrackingFile } from '../services/shipmentTrackingFile';
 import './ShipmentTracking.css';
 
 const formatDate = (value) => value ? new Date(value).toLocaleString() : '—';
-const orderOption = (order) => `#${order.id.slice(0, 8)} · ${formatDate(order.created_at)} · ${order.quantity} cards · ${order.design_name || order.uploaded_xml_filename || 'Card order'} · ${order.eligible ? order.status : order.reason || `${order.status} / ${order.payment_status}`}${order.tracking_notified ? ' · Tracking already sent' : ''}`;
+const orderOption = (order) => `#${order.id.slice(0, 8)} · ${formatDate(order.created_at)} · ${order.quantity} cards · ${order.design_name || order.uploaded_xml_filename || 'Card order'} · ${order.eligible ? order.status : order.reason || `${order.status} / ${order.payment_status}`}${order.tracking_recorded ? ' · Tracking on file' : ''}`;
+const selectable = (status) => ['ready', 'saved'].includes(status);
+const statusLabel = (status) => status === 'accepted' ? 'Accepted by Gmail' : status === 'saved' ? 'Saved · email not sent' : status;
 const destination = (order) => {
   let source = order?.shipping_address || {};
   if (typeof source === 'string') { try { source = JSON.parse(source); } catch { return source; } }
@@ -49,7 +51,7 @@ export default function ShipmentTracking({ onSelectOrder }) {
     return () => { mounted.current = false; stop.current = true; };
   }, [loadHistory]);
   useEffect(() => {
-    if (phase !== 'send') return;
+    if (!['send', 'save'].includes(phase)) return;
     const warn = (event) => { event.preventDefault(); event.returnValue = ''; };
     window.addEventListener('beforeunload', warn);
     return () => window.removeEventListener('beforeunload', warn);
@@ -94,9 +96,9 @@ export default function ShipmentTracking({ onSelectOrder }) {
 
   const selectOrder = (index, id) => { invalidate(); setReferences((current) => ({ ...current, [index]: id })); };
 
-  const markNotified = (orderIds) => {
+  const markRecorded = (orderIds) => {
     setCandidates((current) => Object.fromEntries(Object.entries(current).map(([index, matches]) => [index, {
-      ...matches, orders: matches.orders?.map((order) => orderIds.has(order.id) ? { ...order, tracking_notified: true } : order),
+      ...matches, orders: matches.orders?.map((order) => orderIds.has(order.id) ? { ...order, tracking_recorded: true } : order),
     }])));
   };
 
@@ -116,41 +118,41 @@ export default function ShipmentTracking({ onSelectOrder }) {
       }
       if (mounted.current && !stop.current) {
         setResults(next);
-        markNotified(new Set(next.filter((item) => item.status === 'accepted').map((item) => item.order.id)));
-        setProgress(`${next.filter((item) => item.status === 'ready').length} ready to review out of ${rows.length} shipments.`);
+        markRecorded(new Set(next.filter((item) => ['accepted', 'saved'].includes(item.status)).map((item) => item.order.id)));
+        setProgress(`${next.filter((item) => selectable(item.status)).length} ready to review out of ${rows.length} shipments.`);
       }
     } catch (err) { if (mounted.current) setError(err.message); }
     finally { active.current = false; if (mounted.current) setPhase(''); }
   };
 
-  const send = async () => {
+  const processSelected = async (action) => {
     if (active.current || !confirmed || !selected.size) return;
-    active.current = true; stop.current = false; setPhase('send'); setError('');
-    const chosen = [...selected].filter((index) => results[index]?.status === 'ready');
+    active.current = true; stop.current = false; setPhase(action); setError('');
+    const chosen = [...selected].filter((index) => selectable(results[index]?.status));
     let completed = 0;
     try {
       for (const index of chosen) {
         if (stop.current) break;
         const item = results[index];
-        setProgress(`Sending shipment ${completed + 1} of ${chosen.length}…`);
+        setProgress(`${action === 'save' ? 'Saving' : 'Sending'} shipment ${completed + 1} of ${chosen.length}…`);
         let result;
         try {
-          result = await trackingRequest({ action: 'send', row: item.row, orderId: item.order.id, snapshot: item.snapshot });
+          result = await trackingRequest({ action, row: item.row, orderId: item.order.id, snapshot: item.snapshot });
         } catch (err) {
-          result = { status: 'unknown', message: `${err.message} Refresh the review/history before retrying.` };
+          result = { status: action === 'save' ? 'save_unconfirmed' : 'unknown', message: `${err.message} ${action === 'save' ? 'No email was requested. ' : ''}Refresh the review/history before retrying.` };
           stop.current = true;
         }
         if (mounted.current) {
           setResults((current) => current.map((value, rowIndex) => rowIndex === index ? { ...value, status: result.status, message: result.message } : value));
           setSelected((current) => { const next = new Set(current); next.delete(index); return next; });
-          if (result.status === 'accepted') {
-            markNotified(new Set([item.order.id]));
+          if (['saved', 'accepted'].includes(result.status)) {
+            markRecorded(new Set([item.order.id]));
             setReferences((current) => ({ ...current, [index]: '' }));
           }
         }
         completed++;
         // Stop the batch if delivery is uncertain or Gmail rejects a message.
-        if (result.status !== 'accepted') stop.current = true;
+        if (result.status !== 'accepted' && !(action === 'save' && result.status === 'saved')) stop.current = true;
       }
     } finally {
       active.current = false;
@@ -162,12 +164,12 @@ export default function ShipmentTracking({ onSelectOrder }) {
     }
   };
 
-  const ready = results.map((row, index) => row.status === 'ready' ? index : -1).filter((index) => index >= 0);
+  const ready = results.map((row, index) => selectable(row.status) ? index : -1).filter((index) => index >= 0);
   const toggle = (index) => { setConfirmed(false); setSelected((current) => { const next = new Set(current); if (next.has(index)) next.delete(index); else next.add(index); return next; }); };
   const busy = !!phase;
 
   return <div className="shipment-tracking">
-    <header className="st-heading"><div><p>FULFILLMENT</p><h1 className="page-title">Shipment tracking</h1><span>Import Pirate Ship tracking, verify each order, then email your customers.</span></div><Truck size={32} /></header>
+    <header className="st-heading"><div><p>FULFILLMENT</p><h1 className="page-title">Shipment tracking</h1><span>Import Pirate Ship tracking, verify each order, then save tracking or email your customers.</span></div><Truck size={32} /></header>
     <section className="st-panel">
       <h2>1. Upload your shipment file</h2>
       <p>Use a Pirate Ship CSV or Excel export. Choose the correct order from each shipment’s dropdown. Orders are found by email and are never selected automatically.</p>
@@ -177,31 +179,31 @@ export default function ShipmentTracking({ onSelectOrder }) {
           {Object.entries({ reference: 'Order ID column', tracking: 'Tracking number column', email: 'Email column (search and cross-check)' }).map(([field, label]) => <label key={field}>{label}<select aria-label={label} value={mapping[field]} disabled={busy} onChange={(event) => { invalidate(); setReferences({}); setCandidates({}); setMapping((value) => ({ ...value, [field]: event.target.value })); }}><option value="">{field === 'reference' ? 'Choose orders below' : field === 'tracking' ? 'Choose a column' : 'Not included'}</option>{csv.headers.map((header, index) => <option key={index} value={String(index)}>{header}</option>)}</select></label>)}
         </div>
         <details className="st-manual" open={mapping.reference === '' ? true : undefined}><summary>2. Choose orders ({csv.rows.length} shipments)</summary><p>Compare the order date, design, card count and delivery address. Each shipment has its own selection, even when several rows use the same email. A single suggested order still requires your choice.</p>
-          <label className="st-notified-filter"><input type="checkbox" checked={showNotified} disabled={busy} onChange={(event) => setShowNotified(event.target.checked)} /> Show previously notified orders (for extra packages)</label>
-          <p>Orders with a successfully sent tracking email are hidden by default. Failed sends remain available to retry.</p>
+          <label className="st-notified-filter"><input type="checkbox" checked={showNotified} disabled={busy} onChange={(event) => setShowNotified(event.target.checked)} /> Show orders with tracking (to email saved tracking or add packages)</label>
+          <p>Orders with saved tracking or a successfully sent tracking email are hidden by default. Failed sends remain available to retry.</p>
           {mappedRows().map((row, index) => {
             const matches = candidates[index];
             const chosenOrder = matches?.orders?.find((order) => order.id === row.reference);
             // Preserve an explicit selection for another package while filtering new choices.
-            const visibleOrders = (matches?.orders || []).filter((order) => showNotified || !order.tracking_notified || order.id === row.reference);
+            const visibleOrders = (matches?.orders || []).filter((order) => showNotified || !order.tracking_recorded || order.id === row.reference);
             const hiddenCount = (matches?.orders?.length || 0) - visibleOrders.length;
             return <article className="st-shipment-choice" key={index}>
               <h3>Shipment {index + 1} · <code>{row.tracking || 'No tracking number'}</code></h3>
               <p>{row.email || 'No email column selected'}{csv.headers.map((header, column) => /^(recipient|created date|batch)$/i.test(header) && csv.rows[index][column] ? <small key={column}>{header}: {csv.rows[index][column]}</small> : null)}</p>
               <div className="st-choice-controls">
                 <label>Choose customer’s order<select aria-label={`Order for shipment ${index + 1}`} value={row.reference} disabled={busy && !matches?.loading} onFocus={() => { if (!matches && validEmail(row.email.trim())) findOrders(index); }} onChange={(event) => selectOrder(index, event.target.value)}>
-                  <option value="">{matches?.loading ? 'Finding matching orders…' : matches?.orders?.length === 0 ? 'No matching orders found' : matches && visibleOrders.length === 0 ? 'No unnotified orders on this page' : 'Choose an order…'}</option>
+                  <option value="">{matches?.loading ? 'Finding matching orders…' : matches?.orders?.length === 0 ? 'No matching orders found' : matches && visibleOrders.length === 0 ? 'No orders without tracking on this page' : 'Choose an order…'}</option>
                   {row.reference && !chosenOrder && <option value={row.reference}>Imported / entered reference: {row.reference}</option>}
                   {visibleOrders.map((order) => <option key={order.id} value={order.id} disabled={!order.eligible || matches.loading}>{orderOption(order)}</option>)}
                 </select></label>
                 <button disabled={busy || !validEmail(row.email.trim())} onClick={() => findOrders(index)} aria-label={`Find orders for shipment ${index + 1}`}>{matches?.loading ? 'Finding orders…' : 'Find orders by email'}</button>
               </div>
               {matches?.error && <p className="st-error" role="alert">{matches.error}</p>}
-              {hiddenCount > 0 && <p>{hiddenCount} previously notified {hiddenCount === 1 ? 'order hidden' : 'orders hidden'}. Enable “Show previously notified orders” for an extra package{matches.nextOffset != null ? ', or load older orders below' : ''}.</p>}
+              {hiddenCount > 0 && <p>{hiddenCount} {hiddenCount === 1 ? 'order with tracking hidden' : 'orders with tracking hidden'}. Enable “Show orders with tracking” to email saved tracking or add a package{matches.nextOffset != null ? ', or load older orders below' : ''}.</p>}
               {matches?.orders?.length === 0 && <p>No matching orders found. Check the email or enter the full order ID manually.</p>}
               {matches?.nextOffset != null && <button disabled={busy} onClick={() => findOrders(index, true)}>Load older orders for shipment {index + 1}</button>}
               {chosenOrder && <div className="st-candidate st-chosen" aria-label={`Selected order details for shipment ${index + 1}`}>
-                <span><strong>{chosenOrder.design_name || chosenOrder.uploaded_xml_filename || 'Card order'} · {chosenOrder.quantity} cards</strong><code>{chosenOrder.id}</code><small>{formatDate(chosenOrder.created_at)} · {chosenOrder.status} / {chosenOrder.payment_status}</small><small>{chosenOrder.customer_name} · {chosenOrder.customer_email}</small><small>{destination(chosenOrder) || 'No saved delivery address'}</small>{chosenOrder.tracking_notified && <small>Tracking already sent. Select this order only for an additional package.</small>}{chosenOrder.reason && <small className="st-ineligible">{chosenOrder.reason}</small>}</span>
+                <span><strong>{chosenOrder.design_name || chosenOrder.uploaded_xml_filename || 'Card order'} · {chosenOrder.quantity} cards</strong><code>{chosenOrder.id}</code><small>{formatDate(chosenOrder.created_at)} · {chosenOrder.status} / {chosenOrder.payment_status}</small><small>{chosenOrder.customer_name} · {chosenOrder.customer_email}</small><small>{destination(chosenOrder) || 'No saved delivery address'}</small>{chosenOrder.tracking_recorded && <small>Tracking is already on file. You can email a saved shipment or add an additional package.</small>}{chosenOrder.reason && <small className="st-ineligible">{chosenOrder.reason}</small>}</span>
               </div>}
               <details className="st-reference-entry"><summary>Enter an order reference manually</summary><label>Order ID / saved checkout reference<input aria-label={`Order ID for shipment ${index + 1}`} value={row.reference} disabled={busy} onChange={(event) => selectOrder(index, event.target.value)} /></label></details>
             </article>;
@@ -213,18 +215,18 @@ export default function ShipmentTracking({ onSelectOrder }) {
     {error && <div className="st-error" role="alert">{error}</div>}
     {progress && <p className="st-progress" role="status">{progress}</p>}
     {results.length > 0 && <section className="st-panel">
-      <h2>3. Review and send</h2><p>Recipients and order details come from the saved order. One email is sent per shipment; multiple packages for one order have separate tracking emails. Importing or emailing tracking does not change the order’s status.</p>
+      <h2>3. Review, save or send</h2><p>Both actions save tracking to the selected order and make it visible in the customer’s profile. “Save tracking only” sends no email. “Send tracking emails” saves and emails each shipment. Neither action changes the order’s status.</p>
       <div className="st-table-wrap"><table><thead><tr><th><input type="checkbox" aria-label="Select all ready shipments" checked={ready.length > 0 && ready.every((index) => selected.has(index))} disabled={busy || !ready.length} onChange={(event) => { setSelected(event.target.checked ? new Set(ready) : new Set()); setConfirmed(false); }} /></th><th>Order / customer</th><th>Shipment</th><th>Review</th></tr></thead><tbody>{results.map((result, index) => <tr key={index}>
-        <td><input type="checkbox" aria-label={`Select shipment ${index + 1}`} checked={selected.has(index)} disabled={busy || result.status !== 'ready'} onChange={() => toggle(index)} /></td>
+        <td><input type="checkbox" aria-label={`Select shipment ${index + 1}`} checked={selected.has(index)} disabled={busy || !selectable(result.status)} onChange={() => toggle(index)} /></td>
         <td>{result.order ? <><button className="st-order-link" onClick={() => onSelectOrder(result.order)} disabled={busy}>{result.order.id}</button><strong>{result.order.customer_name || 'Customer'}</strong><span>{result.order.customer_email}</span><small>{formatDate(result.order.created_at)} · {result.order.quantity} cards</small><small>{destination(result.order)}</small>{(result.order.design_name || result.order.uploaded_xml_filename) && <small>{result.order.design_name || result.order.uploaded_xml_filename}</small>}</> : <code>{result.row.reference || 'No order ID'}</code>}</td>
         <td>{result.row.carrier && <strong>{result.row.carrier}</strong>}<code>{result.row.tracking}</code><small>Shipment {index + 1}</small></td>
-        <td><b className={`st-status st-${result.status}`}>{result.status === 'accepted' ? 'Accepted by Gmail' : result.status}</b><p>{result.message}</p>{result.email && <details><summary>Preview email</summary><strong>To: {result.email.to}</strong><small>{result.email.subject}</small><pre>{result.email.text}</pre></details>}</td>
+        <td><b className={`st-status st-${result.status}`}>{statusLabel(result.status)}</b><p>{result.message}</p>{result.email && <details><summary>Preview email</summary><strong>To: {result.email.to}</strong><small>{result.email.subject}</small><pre>{result.email.text}</pre></details>}</td>
       </tr>)}</tbody></table></div>
-      <div className="st-send"><label><input type="checkbox" checked={confirmed} disabled={busy || !selected.size} onChange={(event) => setConfirmed(event.target.checked)} /> I checked the selected orders, customers and tracking numbers.</label><button className="st-primary" onClick={send} disabled={busy || !confirmed || !selected.size}><Send size={17} /> Send {selected.size} tracking {selected.size === 1 ? 'email' : 'emails'}</button>{phase === 'send' && <button onClick={() => { stop.current = true; setProgress('Stopping after the current shipment…'); }}>Stop after current shipment</button>}</div>
+      <div className="st-send"><label><input type="checkbox" checked={confirmed} disabled={busy || !selected.size} onChange={(event) => setConfirmed(event.target.checked)} /> I checked the selected orders, customers and tracking numbers.</label><button onClick={() => processSelected('save')} disabled={busy || !confirmed || !selected.size}><Save size={17} /> Save tracking only ({selected.size})</button><button className="st-primary" onClick={() => processSelected('send')} disabled={busy || !confirmed || !selected.size}><Send size={17} /> Send {selected.size} tracking {selected.size === 1 ? 'email' : 'emails'}</button>{['send', 'save'].includes(phase) && <button onClick={() => { stop.current = true; setProgress('Stopping after the current shipment…'); }}>Stop after current shipment</button>}</div>
     </section>}
-    <section className="st-panel"><div className="st-history-heading"><div><h2>Tracking email history</h2><p>Latest 100 shipments. Accepted means Gmail accepted the email; it does not guarantee delivery to the inbox.</p></div><button onClick={loadHistory} disabled={busy || historyLoading}><RefreshCw size={16} /> Refresh</button></div>
+    <section className="st-panel"><div className="st-history-heading"><div><h2>Tracking history</h2><p>Latest 100 shipments. Saved means no email was sent. Accepted means Gmail accepted the email; it does not guarantee delivery to the inbox.</p></div><button onClick={loadHistory} disabled={busy || historyLoading}><RefreshCw size={16} /> Refresh</button></div>
       {historyError && <div className="st-error" role="alert">{historyError}</div>}
-      {historyLoading ? <p>Loading history…</p> : history.length === 0 ? <p>No tracking emails recorded yet.</p> : <div className="st-table-wrap"><table><thead><tr><th>Order / recipient</th><th>Tracking</th><th>Result</th><th>Last attempt</th></tr></thead><tbody>{history.map((item) => <tr key={item.id}><td><code>{item.order_id}</code><span>{item.recipient_email}</span></td><td>{item.carrier}<code>{item.tracking_number}</code></td><td><b className={`st-status st-${item.status}`}>{item.status === 'accepted' ? 'Accepted by Gmail' : item.status}</b>{item.error && <small>{item.error}</small>}{['sending', 'unknown'].includes(item.status) && <small>Do not resend until the Gmail outcome is checked.</small>}{item.gmail_message_id && <small>Gmail: {item.gmail_message_id}</small>}</td><td>{formatDate(item.attempted_at)}<small>{item.attempts} attempt(s)</small></td></tr>)}</tbody></table></div>}
+      {historyLoading ? <p>Loading history…</p> : history.length === 0 ? <p>No tracking recorded yet.</p> : <div className="st-table-wrap"><table><thead><tr><th>Order / recipient</th><th>Tracking</th><th>Result</th><th>Saved / last email attempt</th></tr></thead><tbody>{history.map((item) => <tr key={item.id}><td><code>{item.order_id}</code><span>{item.recipient_email}</span></td><td>{item.carrier}<code>{item.tracking_number}</code></td><td><b className={`st-status st-${item.status}`}>{statusLabel(item.status)}</b>{item.error && <small>{item.error}</small>}{['sending', 'unknown'].includes(item.status) && <small>Do not resend until the Gmail outcome is checked.</small>}{item.gmail_message_id && <small>Gmail: {item.gmail_message_id}</small>}</td><td>{formatDate(item.attempted_at || item.created_at)}<small>{item.attempts} email attempt(s)</small></td></tr>)}</tbody></table></div>}
     </section>
   </div>;
 }

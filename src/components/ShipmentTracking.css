@@ -48,7 +48,7 @@
 .shipment-tracking .st-order-link { border:none; padding:0; color:var(--accent-primary); background:none; text-align:left; font-family:monospace; overflow-wrap:anywhere; display:block; }
 .shipment-tracking pre { white-space:pre-wrap; overflow-wrap:anywhere; line-height:1.6; font-size:12px; max-width:430px; }
 .shipment-tracking .st-status { display:inline-block; border-radius:5px; padding:4px 7px; background:#59627333; font-size:12px; text-transform:capitalize; }
-.shipment-tracking .st-ready,.shipment-tracking .st-accepted { background:#10b98125; color:#34d399; }
+.shipment-tracking .st-ready,.shipment-tracking .st-accepted,.shipment-tracking .st-saved { background:#10b98125; color:#34d399; }
 .shipment-tracking .st-blocked,.shipment-tracking .st-failed { background:#ef444425; color:#fb7185; }
 .shipment-tracking .st-unknown,.shipment-tracking .st-sending { background:#f59e0b25; color:#fbbf24; }
 .shipment-tracking .st-error { background:#ef444418; border:1px solid #ef444450; padding:14px; border-radius:8px; color:#fb7185; }
