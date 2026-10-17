@@ -78,6 +78,15 @@ export function normalizeCarrier(value) {
   return '';
 }
 
+// Detect only recognizable formats. Ambiguous numeric IDs must not be
+// assigned to a guessed carrier; they can still be sent as tracking numbers.
+export function detectCarrier(tracking) {
+  if (/^AHOY[A-Z0-9]+$/.test(tracking)) return 'Asendia';
+  if (/^1Z[A-Z0-9]{16}$/.test(tracking)) return 'UPS';
+  if (/^9[2345]\d{20}$/.test(tracking) || /^[A-Z]{2}\d{9}US$/.test(tracking)) return 'USPS';
+  return '';
+}
+
 export function validEmail(value) {
   return typeof value === 'string' && value.length <= 254 && /^[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?\.[A-Za-z]{2,}$/.test(value);
 }
@@ -86,13 +95,12 @@ export function normalizeShipment(input = {}) {
   const reference = identifier(input.reference);
   const rawTracking = identifier(input.tracking);
   const tracking = rawTracking.replace(/[\s-]/g, '').toUpperCase();
-  const carrier = normalizeCarrier(input.carrier);
+  const carrier = normalizeCarrier(input.carrier) || detectCarrier(tracking);
   const email = typeof input.email === 'string' ? input.email.trim().toLowerCase() : '';
   const row = { reference: UUID.test(reference) ? reference.toLowerCase() : reference, tracking, carrier, email };
   if (!referenceType(reference)) return { row, error: 'Enter the full TCGPlaytest order ID (UUID), saved Stripe Checkout session ID, or tempOrderId. Email is not an order ID.' };
   if (/^[-+]?\d+(?:\.\d+)?e[-+]?\d+$/i.test(rawTracking) || !/^[A-Z0-9]{8,40}$/.test(tracking)) return { row, error: 'Invalid tracking number. Use the original CSV; spreadsheet rounding or scientific notation cannot be recovered.' };
-  if (!carrier) return { row, error: 'Select a carrier or map a Carrier / Service column.' };
-  if (tracking.startsWith('AHOY') && carrier !== 'Asendia') return { row, error: 'AHOY tracking uses Asendia (Pirate Ship Simple Export Rate). Select Asendia for this shipment.' };
+  if (tracking.startsWith('AHOY') && carrier !== 'Asendia') return { row, error: 'AHOY tracking conflicts with the carrier in this file. Correct or remove the Carrier / Service column.' };
   if (email && !validEmail(email)) return { row, error: 'The CSV email is invalid. Check the column mapping.' };
   return { row, error: null };
 }
@@ -106,7 +114,7 @@ export function trackingUrl(carrier, tracking) {
     DHL: `https://www.dhl.com/global-en/home/tracking.html?tracking-id=${id}`,
     Asendia: `https://a1.asendiausa.com/tracking/?trackingnumber=${id}`,
   };
-  return urls[carrier];
+  return urls[carrier] || '';
 }
 
 export function orderSnapshot(order) {
@@ -138,13 +146,15 @@ export function buildTrackingEmail(order, shipment) {
     ['Order', order.id], ['Order date', date], ['Cards', order.quantity],
     ...(order.design_name || order.uploaded_xml_filename ? [['Design', order.design_name || order.uploaded_xml_filename]] : []),
     ...(destination ? [['Destination', destination]] : []),
-    ['Carrier', shipment.carrier], ['Tracking number', shipment.tracking],
+    ...(shipment.carrier ? [['Carrier', shipment.carrier]] : []), ['Tracking number', shipment.tracking],
   ];
   const url = trackingUrl(shipment.carrier, shipment.tracking);
   const greeting = order.customer_name ? `Hi ${order.customer_name},` : 'Hi,';
   const note = 'A shipping label has been created for this order. Tracking updates appear after the carrier scans your package.';
   const subject = `Tracking for your TCGPlaytest order ${order.id}`;
-  const text = `${greeting}\n\nYour order tracking is ready.\n\n${details.map(([label, value]) => `${label}: ${value}`).join('\n')}\n\nTrack your package: ${url}\n\n${note}\n\nQuestions? Reply to this email or contact support@tcgplaytest.com.\n\nTCGPlaytest`;
-  const html = `<div style="font:16px/1.6 Arial,sans-serif;color:#172033;max-width:620px;margin:auto;padding:24px"><h1 style="font-size:24px">Your order tracking is ready</h1><p>${escapeHtml(greeting)}</p><table style="width:100%;border-collapse:collapse">${details.map(([label, value]) => `<tr><th align="left" style="padding:8px;border-bottom:1px solid #ddd">${escapeHtml(label)}</th><td style="padding:8px;border-bottom:1px solid #ddd;word-break:break-word">${escapeHtml(value)}</td></tr>`).join('')}</table><p style="margin:28px 0"><a href="${escapeHtml(url)}" style="background:#123459;color:white;padding:14px 20px;border-radius:8px;text-decoration:none">Track your package</a></p><p>${note}</p><p>Questions? Reply to this email or contact <a href="mailto:support@tcgplaytest.com">support@tcgplaytest.com</a>.</p><p>TCGPlaytest</p></div>`;
+  const trackingText = url ? `Track your package: ${url}` : 'Use the tracking number above on your carrier’s tracking website. If you need help finding the carrier, reply to this email.';
+  const trackingHtml = url ? `<p style="margin:28px 0"><a href="${escapeHtml(url)}" style="background:#123459;color:white;padding:14px 20px;border-radius:8px;text-decoration:none">Track your package</a></p>` : `<p>${escapeHtml(trackingText)}</p>`;
+  const text = `${greeting}\n\nYour order tracking is ready.\n\n${details.map(([label, value]) => `${label}: ${value}`).join('\n')}\n\n${trackingText}\n\n${note}\n\nQuestions? Reply to this email or contact support@tcgplaytest.com.\n\nTCGPlaytest`;
+  const html = `<div style="font:16px/1.6 Arial,sans-serif;color:#172033;max-width:620px;margin:auto;padding:24px"><h1 style="font-size:24px">Your order tracking is ready</h1><p>${escapeHtml(greeting)}</p><table style="width:100%;border-collapse:collapse">${details.map(([label, value]) => `<tr><th align="left" style="padding:8px;border-bottom:1px solid #ddd">${escapeHtml(label)}</th><td style="padding:8px;border-bottom:1px solid #ddd;word-break:break-word">${escapeHtml(value)}</td></tr>`).join('')}</table>${trackingHtml}<p>${note}</p><p>Questions? Reply to this email or contact <a href="mailto:support@tcgplaytest.com">support@tcgplaytest.com</a>.</p><p>TCGPlaytest</p></div>`;
   return { to: order.customer_email, subject, text, html };
 }
