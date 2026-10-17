@@ -22,11 +22,14 @@
 .shipment-tracking .st-shipment-choice { padding:18px; margin:16px 0; border:1px solid var(--border-color); border-radius:10px; }
 .shipment-tracking .st-shipment-choice h3 { margin:0; font-size:15px; overflow-wrap:anywhere; }
 .shipment-tracking .st-choice-controls { display:flex; align-items:flex-end; flex-wrap:wrap; gap:12px; }
-.shipment-tracking .st-choice-controls label { flex:1 1 220px; font-size:13px; }
+.shipment-tracking .st-choice-controls label { flex:1 1 220px; min-width:0; font-size:13px; }
 .shipment-tracking .st-choice-controls input,.shipment-tracking .st-choice-controls select { display:block; width:100%; box-sizing:border-box; margin-top:6px; }
+.shipment-tracking .st-choice-controls select { text-overflow:ellipsis; }
+.shipment-tracking .st-reference-entry { margin-top:12px; font-size:13px; }
+.shipment-tracking .st-reference-entry input { display:block; width:100%; box-sizing:border-box; margin-top:6px; }
 .shipment-tracking .st-candidates { min-width:0; border:0; padding:0; margin:20px 0 0; }
 .shipment-tracking .st-candidates legend { font-size:13px; overflow-wrap:anywhere; }
-.shipment-tracking .st-candidate { display:flex; align-items:flex-start; gap:12px; padding:14px; margin:10px 0; border:1px solid var(--border-color); border-radius:8px; cursor:pointer; }
+.shipment-tracking .st-candidate { display:flex; align-items:flex-start; gap:12px; padding:14px; margin:10px 0; border:1px solid var(--border-color); border-radius:8px; }
 .shipment-tracking .st-candidate input { flex-shrink:0; margin-top:4px; accent-color:var(--accent-primary); }
 .shipment-tracking .st-candidate span { min-width:0; overflow-wrap:anywhere; }
 .shipment-tracking .st-candidate code { display:block; margin-top:6px; }

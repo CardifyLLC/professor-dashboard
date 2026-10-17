@@ -6,6 +6,7 @@ import { readTrackingFile } from '../services/shipmentTrackingFile';
 import './ShipmentTracking.css';
 
 const formatDate = (value) => value ? new Date(value).toLocaleString() : '—';
+const orderOption = (order) => `#${order.id.slice(0, 8)} · ${formatDate(order.created_at)} · ${order.quantity} cards · ${order.design_name || order.uploaded_xml_filename || 'Card order'} · ${order.eligible ? order.status : order.reason || `${order.status} / ${order.payment_status}`}`;
 const destination = (order) => {
   let source = order?.shipping_address || {};
   if (typeof source === 'string') { try { source = JSON.parse(source); } catch { return source; } }
@@ -156,7 +157,7 @@ export default function ShipmentTracking({ onSelectOrder }) {
     <header className="st-heading"><div><p>FULFILLMENT</p><h1 className="page-title">Shipment tracking</h1><span>Import Pirate Ship tracking, verify each order, then email your customers.</span></div><Truck size={32} /></header>
     <section className="st-panel">
       <h2>1. Upload your shipment file</h2>
-      <p>Use a Pirate Ship CSV or Excel export. When order IDs are missing, find orders by email and choose the correct order for each shipment. Email suggestions are never selected automatically.</p>
+      <p>Use a Pirate Ship CSV or Excel export. Choose the correct order from each shipment’s dropdown. Orders are found by email and are never selected automatically.</p>
       <label className="st-upload"><Upload size={20} /><span>{filename || 'Choose Pirate Ship CSV or Excel'}<small>CSV or .xlsx · up to 500 shipments · 2 MB</small></span><input type="file" accept=".csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" disabled={busy} onChange={upload} /></label>
       {csv && <>
         <div className="st-mappings">
@@ -166,23 +167,26 @@ export default function ShipmentTracking({ onSelectOrder }) {
         <details className="st-manual" open={mapping.reference === '' ? true : undefined}><summary>2. Choose orders and carriers ({csv.rows.length} shipments)</summary><p>Compare the order date, design, card count and delivery address. Each shipment has its own selection, even when several rows use the same email. A single suggested order still requires your choice.</p>
           {mappedRows().map((row, index) => {
             const matches = candidates[index];
+            const chosenOrder = matches?.orders?.find((order) => order.id === row.reference);
             return <article className="st-shipment-choice" key={index}>
               <h3>Shipment {index + 1} · <code>{row.tracking || 'No tracking number'}</code></h3>
               <p>{row.email || 'No email column selected'}{csv.headers.map((header, column) => /^(recipient|created date|batch)$/i.test(header) && csv.rows[index][column] ? <small key={column}>{header}: {csv.rows[index][column]}</small> : null)}</p>
               <div className="st-choice-controls">
-                <label>Order ID / saved checkout reference<input aria-label={`Order ID for shipment ${index + 1}`} value={row.reference} disabled={busy} onChange={(event) => selectOrder(index, event.target.value)} /></label>
+                <label>Choose customer’s order<select aria-label={`Order for shipment ${index + 1}`} value={row.reference} disabled={busy && !matches?.loading} onFocus={() => { if (!matches && validEmail(row.email.trim())) findOrders(index); }} onChange={(event) => selectOrder(index, event.target.value)}>
+                  <option value="">{matches?.loading ? 'Finding matching orders…' : matches?.orders?.length === 0 ? 'No matching orders found' : 'Choose an order…'}</option>
+                  {row.reference && !chosenOrder && <option value={row.reference}>Imported / entered reference: {row.reference}</option>}
+                  {(matches?.orders || []).map((order) => <option key={order.id} value={order.id} disabled={!order.eligible || matches.loading}>{orderOption(order)}</option>)}
+                </select></label>
                 <label>Carrier for this shipment<select aria-label={`Carrier for shipment ${index + 1}`} value={carriers[index] ?? ''} disabled={busy} onChange={(event) => { invalidate(); setCarriers((current) => { const next = { ...current }; if (event.target.value) next[index] = event.target.value; else delete next[index]; return next; }); }}><option value="">{row.carrier ? `Use ${row.carrier}` : 'Choose carrier'}</option>{CARRIERS.map((carrier) => <option key={carrier}>{carrier}</option>)}</select></label>
                 <button disabled={busy || !validEmail(row.email.trim())} onClick={() => findOrders(index)} aria-label={`Find orders for shipment ${index + 1}`}>{matches?.loading ? 'Finding orders…' : 'Find orders by email'}</button>
               </div>
               {matches?.error && <p className="st-error" role="alert">{matches.error}</p>}
-              {matches?.orders && <fieldset className="st-candidates"><legend>Orders for {matches.email} — select one</legend>
-                {matches.orders.length === 0 && <p>No matching orders found. Check the email or enter the full order ID manually.</p>}
-                {matches.orders.map((order) => <label className={`st-candidate${row.reference === order.id ? ' st-chosen' : ''}`} key={order.id}>
-                  <input type="radio" name={`shipment-order-${index}`} aria-label={`Select order ${order.id} for shipment ${index + 1}`} value={order.id} checked={row.reference === order.id} disabled={busy || !order.eligible} onChange={() => selectOrder(index, order.id)} />
-                  <span><strong>{order.design_name || order.uploaded_xml_filename || 'Card order'} · {order.quantity} cards</strong><code>{order.id}</code><small>{formatDate(order.created_at)} · {order.status} / {order.payment_status}</small><small>{order.customer_name} · {order.customer_email}</small><small>{destination(order) || 'No saved delivery address'}</small>{order.reason && <small className="st-ineligible">{order.reason}</small>}</span>
-                </label>)}
-                {matches.nextOffset != null && <button disabled={busy} onClick={() => findOrders(index, true)}>Load older orders for shipment {index + 1}</button>}
-              </fieldset>}
+              {matches?.orders?.length === 0 && <p>No matching orders found. Check the email or enter the full order ID manually.</p>}
+              {matches?.nextOffset != null && <button disabled={busy} onClick={() => findOrders(index, true)}>Load older orders for shipment {index + 1}</button>}
+              {chosenOrder && <div className="st-candidate st-chosen" aria-label={`Selected order details for shipment ${index + 1}`}>
+                <span><strong>{chosenOrder.design_name || chosenOrder.uploaded_xml_filename || 'Card order'} · {chosenOrder.quantity} cards</strong><code>{chosenOrder.id}</code><small>{formatDate(chosenOrder.created_at)} · {chosenOrder.status} / {chosenOrder.payment_status}</small><small>{chosenOrder.customer_name} · {chosenOrder.customer_email}</small><small>{destination(chosenOrder) || 'No saved delivery address'}</small>{chosenOrder.reason && <small className="st-ineligible">{chosenOrder.reason}</small>}</span>
+              </div>}
+              <details className="st-reference-entry"><summary>Enter an order reference manually</summary><label>Order ID / saved checkout reference<input aria-label={`Order ID for shipment ${index + 1}`} value={row.reference} disabled={busy} onChange={(event) => selectOrder(index, event.target.value)} /></label></details>
             </article>;
           })}
         </details>
