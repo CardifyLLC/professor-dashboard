@@ -1,11 +1,13 @@
 import OrderImage from './OrderImage';
+import { dashboardAccessRequest } from '../services/dashboardAccess';
+import { fetchTeamBatcherOrders, isTeamArtwork, resolveTeamArtwork, teamBatcherOrder } from '../services/teamBatcher';
 import { isPartnerOrder, isPartnerImage } from '../services/partnerArtwork.mjs';
-import { resolveOrderImage, partnerOrderRequest } from '../services/partnerOrders';
+import { resolveOrderImage as resolveAdminOrderImage, partnerOrderRequest } from '../services/partnerOrders';
 import React, { useState, useRef, useEffect, createContext, useContext } from 'react';
 import { jsPDF } from 'jspdf';
 import { Upload, FileText, Settings, Download, Layers, X, Grid, Image as ImageIcon, RefreshCw, ArrowRight, ArrowLeft, ZoomIn, ZoomOut, Move, RotateCcw, Eye, Printer, Save, FolderOpen, Trash2, RotateCw, Layout, GripVertical, Hand, MousePointer2, AlignCenterVertical, Scissors, ImagePlus, Images, Sparkles, Calendar, ChevronDown, ChevronLeft, ChevronRight } from 'lucide-react';
 import BeautifulExportModal from './BeautifulExportModal';
-import { fetchPaidOrdersForBatcher, fetchOrderById, getOrderImageUrl, updateOrderCardData, updateOrderCardImages } from '../services/orderService';
+import { fetchPaidOrdersForBatcher, fetchOrderById, getOrderImageUrl as getAdminOrderImageUrl, updateOrderCardData, updateOrderCardImages } from '../services/orderService';
 
 // DEBUG: log image natural vs rendered dimensions to locate where quality is lost
 function logImgInfo(label, imgEl) {
@@ -75,7 +77,22 @@ const INITIAL_CONFIG = {
   printCutLines: true
 };
 
-const CardBatcherPro = ({ showSidebar = true, onBackToDashboard }) => {
+const CardBatcherPro = ({ showSidebar = true, onBackToDashboard, teamAccess = false, onAccessLost }) => {
+  const mounted = useRef(true);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  const checkTeamAccess = async () => {
+    if (!teamAccess) return;
+    if (!mounted.current) throw new Error('Batcher closed.');
+    const grant = await dashboardAccessRequest();
+    if (!grant.permissions.includes('batcher')) { onAccessLost?.(); throw new Error('Batcher access has been removed.'); }
+    if (!mounted.current) throw new Error('Batcher closed.');
+  };
+  const resolveOrderImage = async value => {
+    if (teamAccess && !mounted.current) throw new Error('Batcher closed.');
+    try { return isTeamArtwork(value) ? await resolveTeamArtwork(value) : await resolveAdminOrderImage(value); }
+    catch (error) { if (teamAccess && [401,403].includes(error.status)) onAccessLost?.(); throw error; }
+  };
+  const getOrderImageUrl = value => isTeamArtwork(value) ? value : getAdminOrderImageUrl(value);
   // --- State ---
   // frontImages: { id, url, file, customBack: (url|null), spotMask: (url|null) }
   const [frontImages, setFrontImages] = useState([]);
@@ -518,6 +535,7 @@ const CardBatcherPro = ({ showSidebar = true, onBackToDashboard }) => {
   };
 
   const getCachedFrontUrl = (originalUrl) => {
+    if (teamAccess) return originalUrl;
     if (!originalUrl) return originalUrl;
     const cache = readUpscaledFrontCache();
     return cache[originalUrl] || originalUrl;
@@ -537,6 +555,7 @@ const CardBatcherPro = ({ showSidebar = true, onBackToDashboard }) => {
   };
 
   const persistUpscaledFrontToOrder = async (card, upscaledUrl) => {
+    if (teamAccess) return;
     if (!card?.orderId || !upscaledUrl) return;
 
     const order = await fetchOrderById(card.orderId);
@@ -618,6 +637,7 @@ const CardBatcherPro = ({ showSidebar = true, onBackToDashboard }) => {
   };
 
   const upscaleLoadedImages = async () => {
+    if (teamAccess) return;
     if (frontImages.length === 0 || isUpscaling) return;
     if (frontImages.some(card=>card.partnerOrderId)) { alert('Partner orders use the original client artwork. Export their print sheets without AI upscaling.'); return; }
 
@@ -863,7 +883,8 @@ const CardBatcherPro = ({ showSidebar = true, onBackToDashboard }) => {
   const loadPaidOrders = async (isAutoLoad = false) => {
     setIsLoadingPaidOrders(true);
     try {
-      const paidOrders = await fetchPaidOrdersForBatcher();
+      const paidOrders = teamAccess ? await fetchTeamBatcherOrders() : await fetchPaidOrdersForBatcher();
+      if (teamAccess && !mounted.current) return;
       setPartnerLoadErrors(paidOrders.filter(order=>isPartnerOrder(order) && !order.partnerArtwork?.ready).map(order=>`#${order.id.slice(0,8)}: ${order.partnerArtwork?.error || 'artwork is not ready; open the order for details'}`));
 
       if (paidOrders.length === 0) {
@@ -1050,6 +1071,7 @@ const CardBatcherPro = ({ showSidebar = true, onBackToDashboard }) => {
       }
     } catch (error) {
       console.error('Error loading paid orders:', error);
+      if (teamAccess) { setPartnerLoadErrors([error.message]); if ([401,403].includes(error.status)) onAccessLost?.(); }
       if (!isAutoLoad) {
         alert('Failed to load paid orders. Please try again.');
       }
@@ -1157,6 +1179,7 @@ const CardBatcherPro = ({ showSidebar = true, onBackToDashboard }) => {
   };
 
   const exportProject = async () => {
+    if (teamAccess) return;
     setGenerating(true);
     setGenerationProgress(10);
     try {
@@ -1318,8 +1341,9 @@ const CardBatcherPro = ({ showSidebar = true, onBackToDashboard }) => {
   const generatePDF = async (pagesOverride) => {
     const partnerIds=[...new Set((pagesOverride || customerPages).flatMap(page=>(page.entries || []).map(entry=>entry.card?.partnerOrderId)).filter(Boolean))];
     try {
+      await checkTeamAccess();
       for(const orderId of partnerIds) {
-        const manifest=await partnerOrderRequest({action:'manifest',orderId,prepare:false});
+        const manifest=teamAccess ? (await teamBatcherOrder(orderId)).partnerArtwork : await partnerOrderRequest({action:'manifest',orderId,prepare:false});
         if(!manifest.ready)throw new Error(`Partner order ${orderId.slice(0,8)} is not available for printing.`);
       }
     } catch(error) { alert(error.message); return; }
@@ -1501,6 +1525,7 @@ const CardBatcherPro = ({ showSidebar = true, onBackToDashboard }) => {
         const partSuffix = chunkCount > 1 ? `-part${chunkIdx + 1}` : '';
         setGenerationLabel(`Saving PDF file${partSuffix}`);
 
+        await checkTeamAccess();
         const arrayBuffer = doc.output('arraybuffer');
         const blob = new Blob([arrayBuffer], { type: 'application/pdf' });
         const url = URL.createObjectURL(blob);
@@ -1615,6 +1640,7 @@ const CardBatcherPro = ({ showSidebar = true, onBackToDashboard }) => {
         const partSuffix = chunkCount > 1 ? `-part${chunkIdx + 1}` : '';
         setGenerationLabel(`Saving mask PDF file${partSuffix}`);
 
+        await checkTeamAccess();
         const arrayBuffer = doc.output('arraybuffer');
         const blob = new Blob([arrayBuffer], { type: 'application/pdf' });
         const url = URL.createObjectURL(blob);
@@ -1723,6 +1749,7 @@ const CardBatcherPro = ({ showSidebar = true, onBackToDashboard }) => {
     removeFrontImage,
     exportPreset,
     importPreset,
+    teamAccess,
     exportProject,
     importProject
   };
@@ -1940,7 +1967,7 @@ const CardBatcherPro = ({ showSidebar = true, onBackToDashboard }) => {
                 )}
 
                 <div className="flex gap-2">
-                  <button
+                  {!teamAccess && <button
                     onClick={upscaleLoadedImages}
                     disabled={generating || isUpscaling || frontImages.length === 0 || !UPSCALE_API_URL}
                     title={!UPSCALE_API_URL ? 'Set VITE_UPSCALE_API_URL to enable Real-ESRGAN upscaling' : 'Upscale loaded front cards'}
@@ -1951,7 +1978,7 @@ const CardBatcherPro = ({ showSidebar = true, onBackToDashboard }) => {
                   >
                     {isUpscaling ? <RefreshCw className="animate-spin w-3 h-3" /> : <Sparkles className="w-3 h-3" />}
                     {isUpscaling ? 'Upscaling' : 'Upscale'}
-                  </button>
+                  </button>}
                   <button
                     onClick={() => openExportScopeModal('mask')}
                     disabled={generating || isUpscaling || frontImages.length === 0}
@@ -2629,13 +2656,13 @@ const CardBatcherPro = ({ showSidebar = true, onBackToDashboard }) => {
                       <div className="pt-3 border-t border-slate-200">
                         <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-3">Full Project (With Images)</label>
                         <div className="grid grid-cols-1 gap-3">
-                          <button
+                          {!teamAccess && <button
                             onClick={exportProject}
                             disabled={generating}
                             className="flex items-center justify-center gap-1 bg-slate-200 hover:bg-slate-300 text-slate-700 py-2.5 rounded text-xs font-semibold transition-colors"
                           >
                             <Download className="w-3 h-3" /> Save Project
-                          </button>
+                          </button>}
                           <label className={`flex items-center justify-center gap-1 bg-slate-200 hover: bg-slate-300 text-slate-700 py-2.5 rounded text-xs font-semibold transition-colors cursor-pointer ${isLoadingProject ? 'opacity-50 cursor-wait' : ''} `}>
                             {isLoadingProject ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Upload className="w-3 h-3" />}
                             Load Project
@@ -3188,7 +3215,7 @@ const CardBatcherPro = ({ showSidebar = true, onBackToDashboard }) => {
           )}
 
           <div className="flex gap-2">
-            <button
+            {!teamAccess && <button
               onClick={upscaleLoadedImages}
               disabled={generating || isUpscaling || frontImages.length === 0 || !UPSCALE_API_URL}
               title={!UPSCALE_API_URL ? 'Set VITE_UPSCALE_API_URL to enable Real-ESRGAN upscaling' : 'Upscale loaded front cards'}
@@ -3199,7 +3226,7 @@ const CardBatcherPro = ({ showSidebar = true, onBackToDashboard }) => {
             >
               {isUpscaling ? <RefreshCw className="animate-spin w-3 h-3" /> : <Sparkles className="w-3 h-3" />}
               {isUpscaling ? 'Upscaling' : 'Upscale'}
-            </button>
+            </button>}
             <button
               onClick={() => openExportScopeModal('mask')}
               disabled={generating || isUpscaling || frontImages.length === 0}
@@ -3817,13 +3844,13 @@ const CardBatcherPro = ({ showSidebar = true, onBackToDashboard }) => {
                   <div className="pt-2 border-t border-slate-200">
                     <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2">Full Project (With Images)</label>
                     <div className="grid grid-cols-2 gap-2">
-                      <button
+                      {!teamAccess && <button
                         onClick={exportProject}
                         disabled={generating}
                         className="flex items-center justify-center gap-1 bg-slate-200 hover:bg-slate-300 text-slate-700 py-1.5 rounded text-xs font-semibold transition-colors"
                       >
                         <Download className="w-3 h-3" /> Save Project
-                      </button>
+                      </button>}
                       <label className={`flex items-center justify-center gap-1 bg-slate-200 hover: bg-slate-300 text-slate-700 py-1.5 rounded text-xs font-semibold transition-colors cursor-pointer ${isLoadingProject ? 'opacity-50 cursor-wait' : ''} `}>
                         {isLoadingProject ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Upload className="w-3 h-3" />}
                         Load Project
@@ -4224,6 +4251,7 @@ export const BatcherPROSidebar = () => {
     removeFrontImage,
     exportPreset,
     importPreset,
+    teamAccess,
     exportProject,
     importProject
   } = ctx;
@@ -4836,14 +4864,14 @@ export const BatcherPROSidebar = () => {
         <div className="pt-2" style={{ borderTop: '1px solid var(--border-color)' }}>
           <label className="block text-[10px] font-bold uppercase tracking-wider mb-2" style={{ color: 'var(--text-muted)' }}>Full Project (With Images)</label>
           <div className="grid grid-cols-2 gap-2">
-            <button
+            {!teamAccess && <button
               onClick={exportProject}
               disabled={generating}
               className="flex items-center justify-center gap-1 py-1.5 rounded text-xs font-semibold transition-colors"
               style={{ backgroundColor: 'var(--bg-hover)', color: 'var(--text-primary)' }}
             >
               <Download className="w-3 h-3" /> Save Project
-            </button>
+            </button>}
             <label className={`flex items-center justify-center gap-1 py-1.5 rounded text-xs font-semibold transition-colors cursor-pointer ${isLoadingProject ? 'opacity-50 cursor-wait' : ''} `} style={{ backgroundColor: 'var(--bg-hover)', color: 'var(--text-primary)' }}>
               {isLoadingProject ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Upload className="w-3 h-3" />}
               Load Project

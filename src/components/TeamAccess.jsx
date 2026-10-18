@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ShieldCheck, UserPlus, RefreshCw } from 'lucide-react';
-import { TEAM_SECTIONS } from '../../shared/team-permissions.mjs';
+import { TEAM_SECTIONS, ORDER_DOWNLOAD_PERMISSION, BATCHER_PERMISSION } from '../../shared/team-permissions.mjs';
 import { dashboardAccessRequest } from '../services/dashboardAccess';
 import './TeamAccess.css';
 
-const titles = permissions => permissions.map(id => TEAM_SECTIONS.find(section => section.id === id)?.title || id).join(', ');
+const titles = permissions => permissions.map(id => [...TEAM_SECTIONS, ORDER_DOWNLOAD_PERMISSION, BATCHER_PERMISSION].find(section => section.id === id)?.title || id).join(', ');
 export default function TeamAccess() {
   const [members, setMembers] = useState([]);
   const [offset, setOffset] = useState(0), [nextOffset, setNextOffset] = useState(null);
@@ -42,7 +42,7 @@ export default function TeamAccess() {
     finally { pending.current = false; setBusy(false); }
   };
   return <section className="team-access">
-    <header className="ta-heading"><div><p className="ta-eyebrow">ADMINISTRATION</p><h1>Team Access</h1><p>Choose who can view your dashboard and which sections they can read.</p></div><ShieldCheck size={38}/></header>
+    <header className="ta-heading"><div><p className="ta-eyebrow">ADMINISTRATION</p><h1>Team Access</h1><p>Choose which sections each person can view, download order PDFs or use Batcher PRO.</p></div><ShieldCheck size={38}/></header>
     <div className="ta-panel ta-info"><ShieldCheck size={24}/><div><strong>Read-only access, controlled by your admins</strong><p>Each checkbox grants access to all records shown in that section, including the customer information described below. Viewers cannot change orders, save tracking, send emails, issue refunds, grant PRINTS or manage access.</p><p>They use their own approved Google account. Full administrators keep their existing access. Adding someone here does not send an invitation email.</p></div></div>
     <div className="ta-toolbar"><button className="ta-primary" onClick={() => open('grant')} disabled={busy}><UserPlus size={17}/>Allow an email</button><button onClick={() => { setError(''); load(offset); }} disabled={loading || busy}><RefreshCw size={16}/>Refresh</button></div>
     {notice && <p role="status" className="ta-notice">{notice}</p>}
@@ -57,8 +57,16 @@ export default function TeamAccess() {
       <h2 id="team-dialog-title">{editor.kind === 'revoke' ? 'Remove dashboard access?' : editor.kind === 'grant' ? 'Allow dashboard access' : editor.member.revoked_at ? 'Restore dashboard access' : 'Edit read permissions'}</h2>
       {editor.kind === 'revoke' ? <p><strong>{email}</strong> will lose access to every allowed section. This does not delete their customer account or orders.</p> : <>
         <label className="ta-email">Approved email<input type="email" value={email} onChange={event => setEmail(event.target.value)} required maxLength={254} readOnly={editor.kind !== 'grant'} autoComplete="off"/></label>
-        <fieldset disabled={busy}><legend>Allow this person to read</legend><div className="ta-permissions">{TEAM_SECTIONS.map(section => <label key={section.id} className={'ta-permission ' + (permissions.includes(section.id) ? 'ta-checked' : '')}><input type="checkbox" checked={permissions.includes(section.id)} onChange={event => setPermissions(current => event.target.checked ? [...current, section.id] : current.filter(id => id !== section.id))}/><span><strong>{section.title}</strong><small>{section.description}</small></span></label>)}</div></fieldset>
-        <p className="ta-small">No write permissions are granted. Access management, Agent Access, partner operations and Batcher PRO remain available only to full administrators.</p>
+        <fieldset disabled={busy}><legend>Allow this person to read</legend><div className="ta-permissions">{TEAM_SECTIONS.map(section => <label key={section.id} className={'ta-permission ' + (permissions.includes(section.id) ? 'ta-checked' : '')}><input type="checkbox" checked={permissions.includes(section.id)} onChange={event => setPermissions(current => event.target.checked ? [...current, section.id] : current.filter(id => id !== section.id && !(section.id === 'orders' && id === 'order-downloads')))}/><span><strong>{section.title}</strong><small>{section.description}</small></span></label>)}</div></fieldset>
+        <fieldset disabled={busy}><legend>Order downloads</legend><label className={'ta-permission ' + (permissions.includes('order-downloads') ? 'ta-checked' : '')}>
+          <input type="checkbox" checked={permissions.includes('order-downloads')} onChange={event => setPermissions(current => event.target.checked ? [...new Set([...current, 'orders', 'order-downloads'])] : current.filter(id => id !== 'order-downloads'))}/>
+          <span><strong>{ORDER_DOWNLOAD_PERMISSION.title}</strong><small>{ORDER_DOWNLOAD_PERMISSION.description}</small></span>
+        </label></fieldset>
+        <fieldset disabled={busy}><legend>Printing tools</legend><label className={'ta-permission ' + (permissions.includes('batcher') ? 'ta-checked' : '')}>
+          <input type="checkbox" checked={permissions.includes('batcher')} onChange={event => setPermissions(current => event.target.checked ? [...current, 'batcher'] : current.filter(id => id !== 'batcher'))}/>
+          <span><strong>{BATCHER_PERMISSION.title}</strong><small>{BATCHER_PERMISSION.description}</small></span>
+        </label></fieldset>
+        <p className="ta-small">Saved records remain read-only. Access management, Agent Access and partner operations require a full administrator.</p>
       </>}
       {error && <p className="ta-error" role="alert">{error}</p>}
       <div className="ta-toolbar"><button type="button" onClick={close} disabled={busy}>Cancel</button><button className={editor.kind === 'revoke' ? 'ta-danger' : 'ta-primary'} type="submit" disabled={busy || (editor.kind !== 'revoke' && (!email.trim() || !permissions.length))}>{busy ? 'Saving…' : editor.kind === 'revoke' ? 'Confirm removal' : 'Save access'}</button></div>
