@@ -84,7 +84,7 @@ async function readXlsx(file) {
       values[column] = value;
     }
     if (values.some((value) => value?.trim())) rows.push(values);
-    if (rows.length > MAX_CSV_ROWS + 1) throw new Error('Import up to 500 shipments at a time.');
+    if (rows.length > MAX_CSV_ROWS + 1) throw new Error(`Import up to ${MAX_CSV_ROWS.toLocaleString('en-US')} shipments at a time.`);
   }
   const width = rows[0]?.length || 0;
   if (rows.some((row) => row.length > width)) throw new Error('Each shipment column must have a heading.');
