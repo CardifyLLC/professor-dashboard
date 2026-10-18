@@ -1,19 +1,10 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import Dashboard from './components/Dashboard'
+import ReadOnlyDashboard from './components/ReadOnlyDashboard'
+import { dashboardAccessRequest } from './services/dashboardAccess'
 import { supabase } from './services/supabaseClient'
 import './style.css'
 import { rememberOrderForSignIn } from './services/orderLinks.mjs'
-
-async function isEnabledAdmin(userId) {
-  if (!userId) return false
-  const { data } = await supabase
-    .from('dashboard_admins')
-    .select('enabled')
-    .eq('user_id', userId)
-    .eq('enabled', true)
-    .maybeSingle()
-  return Boolean(data)
-}
 
 function Login() {
   const [error, setError] = useState('')
@@ -50,42 +41,59 @@ function Login() {
 }
 
 function App() {
-  const [authed, setAuthed] = useState(false)
+  const [access, setAccess] = useState(null)
   const [loading, setLoading] = useState(true)
-
-  useEffect(() => {
-    let active = true
-
-    const verifySession = async (session) => {
-      const allowed = await isEnabledAdmin(session?.user?.id)
-      if (!active) return
-      setAuthed(Boolean(session && allowed))
-      setLoading(false)
-      if (session && !allowed) {
-        await supabase.auth.signOut()
-        if (active) window.alert('This Google account is not authorized for the dashboard.')
+  const [error, setError] = useState('')
+  const generation = useRef(0)
+  const verifySession = useCallback(async () => {
+    const version = ++generation.current
+    try {
+      const { data, error: sessionError } = await supabase.auth.getSession()
+      if (sessionError) throw sessionError
+      if (!data.session) {
+        if (version === generation.current) { setAccess(null); setError(''); setLoading(false) }
+        return
       }
-    }
-
-    supabase.auth.getSession().then(({ data }) => verifySession(data.session))
-    const { data } = supabase.auth.onAuthStateChange((event, session) => {
-      if (event === 'SIGNED_OUT') {
-        setAuthed(false)
-        setLoading(false)
-      } else if (event === 'SIGNED_IN') {
-        verifySession(session)
-      }
-    })
-
-    return () => {
-      active = false
-      data.subscription.unsubscribe()
+      const result = await dashboardAccessRequest()
+      if (version === generation.current) { setAccess(result); setError(''); setLoading(false) }
+    } catch (err) {
+      if (version === generation.current) { setAccess(null); setError(err.message || 'Unable to verify dashboard access.'); setLoading(false) }
     }
   }, [])
+  const accessLost = useCallback(() => { generation.current++; setAccess(null); setLoading(true); verifySession() }, [verifySession])
 
-  if (loading) return null
-  if (!authed) return <Login />
-  return <Dashboard />
+  useEffect(() => {
+    const counter = generation
+    let scheduled
+    verifySession()
+    const { data } = supabase.auth.onAuthStateChange(event => {
+      if (event === 'SIGNED_OUT') {
+        counter.current++; setAccess(null); setError(''); setLoading(false)
+      } else {
+        // Leave the auth callback before asking Supabase for the session again.
+        window.clearTimeout(scheduled)
+        scheduled = window.setTimeout(verifySession, 0)
+      }
+    })
+    const onFocus = () => { if (document.visibilityState === 'visible') verifySession() }
+    const timer = window.setInterval(onFocus, 30000)
+    window.addEventListener('focus', onFocus)
+    window.addEventListener('pageshow', onFocus)
+    document.addEventListener('visibilitychange', onFocus)
+    return () => {
+      counter.current++; window.clearTimeout(scheduled); window.clearInterval(timer)
+      data.subscription.unsubscribe()
+      window.removeEventListener('focus', onFocus)
+      window.removeEventListener('pageshow', onFocus)
+      document.removeEventListener('visibilitychange', onFocus)
+    }
+  }, [verifySession])
+
+  if (loading) return <div className="ta-viewer"><p role="status">Checking dashboard access…</p></div>
+  if (error) return <div className="ta-viewer"><div className="team-access ta-panel"><h1>Dashboard access</h1><p role="alert" className="ta-error">{error}</p><div className="ta-toolbar"><button onClick={verifySession}>Try again</button><button onClick={() => supabase.auth.signOut()}>Sign out</button></div></div></div>
+  if (!access) return <Login />
+  if (access.role === 'admin') return <Dashboard key={access.user_id} />
+  return <ReadOnlyDashboard key={access.user_id + access.version} access={access} onAccessLost={accessLost} />
 }
 
 export default App
