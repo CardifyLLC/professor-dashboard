@@ -55,4 +55,21 @@
 .shipment-tracking .st-progress { color:var(--text-primary); }
 .shipment-tracking .st-send { display:flex; align-items:center; flex-wrap:wrap; gap:18px; margin-top:22px; }
 .shipment-tracking .st-send label { display:flex; align-items:center; gap:10px; width:100%; }
+.shipment-tracking .st-confirm { position:fixed; inset:0; margin:auto; width:min(540px,calc(100vw - 40px)); max-height:calc(100dvh - 40px); overflow:auto; box-sizing:border-box; padding:28px; border:1px solid var(--border-color); border-radius:16px; background:var(--bg-card,#171d2c); color:var(--text-primary,#fff); box-shadow:0 24px 80px #0008; }
+.shipment-tracking .st-confirm::backdrop { background:#020617b3; }
+.shipment-tracking .st-confirm>svg { color:var(--accent-primary,#3b82f6); margin-bottom:16px; }
+.shipment-tracking .st-confirm h2 { font-size:22px; line-height:1.3; }
+.shipment-tracking .st-confirm p { overflow-wrap:anywhere; }
+.shipment-tracking .st-confirm-actions { display:flex; justify-content:flex-end; gap:12px; flex-wrap:wrap; margin-top:24px; }
+.shipment-tracking .st-result { border:1px solid #10b98155; background:#10b98112; border-radius:12px; padding:20px; color:var(--text-primary); }
+.shipment-tracking .st-result strong { color:#34d399; }
+.shipment-tracking .st-result p:last-child { margin-bottom:0; }
+.shipment-tracking .st-result-incomplete { border-color:#f59e0b70; background:#f59e0b12; }
+.shipment-tracking .st-result-incomplete strong { color:#fbbf24; }
+.shipment-tracking .st-import-issues { padding:14px; overflow-wrap:anywhere; }
+.shipment-tracking .st-import-issues li { margin:10px 0; }
+.shipment-tracking .st-progress { display:flex; align-items:center; gap:10px; }
+.shipment-tracking .st-spinner { flex-shrink:0; animation:st-spin 1s linear infinite; }
+@keyframes st-spin { to { transform:rotate(360deg); } }
+@media(prefers-reduced-motion:reduce) { .shipment-tracking .st-spinner { animation:none; } }
 @media(max-width:700px) { .shipment-tracking .st-panel { padding:15px; } .shipment-tracking .st-heading svg { display:none; } .shipment-tracking .st-upload input { width:100%; } }
