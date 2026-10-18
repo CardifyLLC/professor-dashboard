@@ -1,6 +1,6 @@
 import { readSection, SectionReadError } from './section-reader.mjs';
 import { randomUUID } from 'node:crypto';
-import { TEAM_PERMISSION_IDS } from '../shared/team-permissions.mjs';
+import { TEAM_PERMISSION_IDS, TEAM_MEMBER_PERMISSION_IDS } from '../shared/team-permissions.mjs';
 
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
 const MEMBER_FIELDS = 'id,email,user_id,permissions,created_at,updated_at,revoked_at,version';
@@ -58,10 +58,10 @@ function createAccess({ createClient, env, fetchImpl }) {
     return { user, email, admin: Boolean(admin), client };
   }
   async function permissions(identity, bind = false) {
-    if (identity.admin) return { role: 'admin', email: identity.email, user_id: identity.user.id, permissions: TEAM_PERMISSION_IDS, version: 'admin' };
+    if (identity.admin) return { role: 'admin', email: identity.email, user_id: identity.user.id, permissions: TEAM_MEMBER_PERMISSION_IDS, version: 'admin' };
     if (!identity.email || !identity.user.email_confirmed_at || identity.user.is_anonymous) throw new HttpError(403, 'A verified approved email is required.');
     let member = fail(await db().from('dashboard_viewers').select(MEMBER_FIELDS).eq('email', identity.email).is('revoked_at', null).maybeSingle());
-    if (!member || !member.permissions?.length || member.permissions.some(id => !TEAM_PERMISSION_IDS.includes(id))) throw new HttpError(403, 'This account has no dashboard access. Ask an administrator.');
+    if (!member || !member.permissions?.length || member.permissions.some(id => !TEAM_MEMBER_PERMISSION_IDS.includes(id)) || (member.permissions.includes('order-downloads') && !member.permissions.includes('orders'))) throw new HttpError(403, 'This account has no dashboard access. Ask an administrator.');
     if (!member.user_id && bind) {
       // Compare-and-set prevents a concurrent revoke/edit/account claim being overwritten.
       member = fail(await db().from('dashboard_viewers').update({ user_id: identity.user.id }).eq('id', member.id).eq('version', member.version).is('user_id', null).is('revoked_at', null).select(MEMBER_FIELDS).maybeSingle())
@@ -106,7 +106,8 @@ export function createDashboardAccessHandler({ createClient, env = process.env, 
       const body = await bodyFor(request);
       const allowed = body.action === 'grant' ? ['action', 'email', 'permissions'] : body.action === 'update' ? ['action', 'id', 'version', 'permissions'] : body.action === 'revoke' ? ['action', 'id', 'version'] : [];
       if (!allowed.length || Object.keys(body).some(key => !allowed.includes(key))) throw new HttpError(400, 'Unsupported access action or fields.');
-      if (body.action !== 'revoke' && (!Array.isArray(body.permissions) || !body.permissions.length || body.permissions.length > TEAM_PERMISSION_IDS.length || body.permissions.some(id => !TEAM_PERMISSION_IDS.includes(id)) || new Set(body.permissions).size !== body.permissions.length)) throw new HttpError(400, 'Choose at least one supported read permission.');
+      if (body.action !== 'revoke' && (!Array.isArray(body.permissions) || !body.permissions.length || body.permissions.length > TEAM_MEMBER_PERMISSION_IDS.length || body.permissions.some(id => !TEAM_MEMBER_PERMISSION_IDS.includes(id)) || new Set(body.permissions).size !== body.permissions.length)) throw new HttpError(400, 'Choose at least one supported read permission.');
+      if (body.action !== 'revoke' && body.permissions.includes('order-downloads') && !body.permissions.includes('orders')) throw new HttpError(400, 'Download order PDFs also requires Orders & customers access.');
       const now = new Date().toISOString();
       const changes = { updated_at: now, updated_by: identity.user.id, version: randomUUID() };
       await access.recheck(identity);
@@ -143,3 +144,5 @@ export function createDashboardReadHandler({ createClient, env = process.env, fe
     } catch (error) { return report(send, error); }
   };
 }
+
+export { createAccess as createDashboardAuthorization, HttpError as DashboardAccessError };
