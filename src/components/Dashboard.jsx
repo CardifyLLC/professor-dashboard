@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import * as XLSX from 'xlsx';
 import { Coins } from 'lucide-react';
-import { fetchOrders, fetchAllOrders, fetchOrderById, fetchOrdersForExport, updateOrderStatus } from '../services/orderService';
+import { fetchOrders, fetchAllOrders, fetchOrdersForExport, updateOrderStatus } from '../services/orderService';
 import { supabase } from '../services/supabaseClient';
 import OrderList from './OrderList';
 import OrderDetail from './OrderDetail';
@@ -20,13 +20,14 @@ import SharedDeckRequests from './SharedDeckRequests';
 import PrintsAnalytics from './PrintsAnalytics';
 import EmailCampaignHistory from './EmailCampaignHistory';
 import ShipmentTracking from './ShipmentTracking';
+import useOrderLink from '../hooks/useOrderLink';
 
 const Dashboard = () => {
     const [orders, setOrders] = useState([]);
     const [allOrders, setAllOrders] = useState([]);
     const [loading, setLoading] = useState(true);
     const [loadingAll, setLoadingAll] = useState(false);
-    const [selectedOrder, setSelectedOrder] = useState(null);
+    const { selectedOrder, setSelectedOrder, openOrder: handleSelectOrder, closeOrder, orderLinkError, orderLinkLoading } = useOrderLink();
     const [searchTerm, setSearchTerm] = useState('');
     const [activeView, setActiveView] = useState('orders');
     const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -144,18 +145,6 @@ const Dashboard = () => {
         } catch (error) {
             console.error('Bulk status update failed', error);
             alert(`Failed to update some orders: ${error.message || error}`);
-        }
-    };
-
-    const handleSelectOrder = async (order) => {
-        try {
-            // Fetch full order details including card_images and card_data
-            const fullOrder = await fetchOrderById(order.id);
-            setSelectedOrder(fullOrder);
-        } catch (error) {
-            console.error('Failed to load order details:', error);
-            // Fallback to the order from the list if fetch fails
-            setSelectedOrder(order);
         }
     };
 
@@ -495,7 +484,7 @@ const Dashboard = () => {
                                     )}
 
                                     {activeView === 'shipment-tracking' && (
-                                        <ShipmentTracking onSelectOrder={handleSelectOrder} />
+                                        <ShipmentTracking />
                                     )}
 
                                     {activeView === 'prints-analytics' && (
@@ -550,10 +539,17 @@ const Dashboard = () => {
                         </div>
                     </main>
 
+                    {(orderLinkLoading || orderLinkError) && <div className="modal-overlay" onClick={closeOrder}>
+                        <div className="modal-content" onClick={(event) => event.stopPropagation()} style={{ padding: 24 }}>
+                            <p role={orderLinkError ? 'alert' : 'status'}>{orderLinkError || 'Loading order…'}</p>
+                            <button type="button" onClick={closeOrder}>Close</button>
+                        </div>
+                    </div>}
                     {selectedOrder && (
                         <OrderDetail
+                            key={selectedOrder.id}
                             order={selectedOrder}
-                            onClose={() => setSelectedOrder(null)}
+                            onClose={closeOrder}
                             onOrderUpdated={handleOrderUpdated}
                         />
                     )}

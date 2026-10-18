@@ -1,4 +1,5 @@
 import OrderImage from './OrderImage';
+import OrderLink from './OrderLink';
 import PartnerOrderPanel from './PartnerOrderPanel';
 import { isPartnerOrder } from '../services/partnerArtwork.mjs';
 import { resolveOrderImage } from '../services/partnerOrders';
@@ -463,8 +464,9 @@ const OrderDetail = ({ order, onClose, onOrderUpdated }) => {
                     <div>
                         <h2>Order #{orderId}</h2>
                         <small style={{ display: 'block', overflowWrap: 'anywhere', color: 'var(--text-muted)', marginTop: '6px' }}>
-                            Full order ID for shipping: <code style={{ userSelect: 'all' }}>{order.id}</code>
+                            Full order ID: <code style={{ userSelect: 'all' }}>{order.id}</code>
                         </small>
+                        <OrderLink key={order.id} orderId={order.id} />
                         {partnerOrder && <PartnerOrderPanel order={order} onOrderUpdated={onOrderUpdated}/> }
                         {xmlTaggedCount > 0 && (
                             <div style={{ marginTop: '0.35rem', fontSize: '0.875rem', fontWeight: 600, color: '#60a5fa' }}>
