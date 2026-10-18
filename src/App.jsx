@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import Dashboard from './components/Dashboard'
 import { supabase } from './services/supabaseClient'
 import './style.css'
+import { rememberOrderForSignIn } from './services/orderLinks.mjs'
 
 async function isEnabledAdmin(userId) {
   if (!userId) return false
@@ -19,6 +20,7 @@ function Login() {
 
   const signInWithGoogle = async () => {
     setError('')
+    rememberOrderForSignIn()
     const { error: signInError } = await supabase.auth.signInWithOAuth({
       provider: 'google',
       options: { redirectTo: window.location.origin },
