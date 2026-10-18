@@ -21,6 +21,7 @@ import PrintsAnalytics from './PrintsAnalytics';
 import EmailCampaignHistory from './EmailCampaignHistory';
 import ShipmentTracking from './ShipmentTracking';
 import AgentAccess from './AgentAccess';
+import TeamAccess from './TeamAccess';
 import useOrderLink from '../hooks/useOrderLink';
 
 const Dashboard = () => {
@@ -214,6 +215,14 @@ const Dashboard = () => {
                                 style={{ width: '100%', font: 'inherit', textAlign: 'left' }}
                             >
                                 <span>🔑</span> Agent Access
+                            </button>
+                            <button
+                                type="button"
+                                className={'nav-item ' + (activeView === 'team-access' ? 'active' : '')}
+                                onClick={() => { setActiveView('team-access'); setMobileMenuOpen(false); }}
+                                style={{ width: '100%', font: 'inherit', textAlign: 'left' }}
+                            >
+                                <span>🛡️</span> Team Access
                             </button>
                             <div
                                 className={`nav-item ${activeView === 'customers' ? 'active' : ''}`}
@@ -498,6 +507,7 @@ const Dashboard = () => {
                                     {activeView === 'agent-access' && (
                                         <AgentAccess />
                                     )}
+                                    {activeView === 'team-access' && <TeamAccess />}
 
                                     {activeView === 'prints-analytics' && (
                                         <PrintsAnalytics />
