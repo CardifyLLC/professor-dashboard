@@ -11,3 +11,14 @@ export const TEAM_SECTIONS = [
   { id: 'order-stats', title: 'Deleted-order statistics', description: 'Daily archived order counts, card counts and revenue totals. Does not include customer records.', columns: [['stat_date', 'Date'], ['total_orders', 'Orders'], ['total_cards', 'Cards'], ['paid_orders', 'Paid'], ['completed_orders', 'Completed'], ['cancelled_orders', 'Cancelled'], ['gross_revenue_cents', 'Gross revenue (cents)'], ['refunded_amount_cents', 'Refunds (cents)'], ['net_revenue_cents', 'Net revenue (cents)']] },
 ];
 export const TEAM_PERMISSION_IDS = TEAM_SECTIONS.map(section => section.id);
+
+// Team-only capabilities. Agent keys retain the read sections above.
+export const ORDER_DOWNLOAD_PERMISSION = {
+  id: 'order-downloads', title: 'Download order PDFs',
+  description: 'Download completed, generated order PDFs. Requires Orders & customers. Does not include artwork ZIPs or uploaded XML.',
+};
+export const BATCHER_PERMISSION = {
+  id: 'batcher', title: 'Batcher PRO',
+  description: 'Load paid orders and their print artwork, arrange sheets locally and export print PDFs. Does not change saved orders or allow upscaling.',
+};
+export const TEAM_MEMBER_PERMISSION_IDS = [...TEAM_PERMISSION_IDS, ORDER_DOWNLOAD_PERMISSION.id, BATCHER_PERMISSION.id];
