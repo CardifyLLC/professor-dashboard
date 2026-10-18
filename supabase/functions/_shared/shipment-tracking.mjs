@@ -1,5 +1,5 @@
 // Shared by the CSV review screen and the authenticated Edge Function.
-export const MAX_CSV_ROWS = 500;
+export const MAX_CSV_ROWS = 5000;
 export const MAX_CSV_BYTES = 2 * 1024 * 1024;
 export const CARRIERS = ['USPS', 'UPS', 'FedEx', 'DHL', 'Asendia'];
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -14,7 +14,7 @@ export function parseTrackingCsv(source) {
     finishCell();
     if (row.some((value) => value.trim())) rows.push(row);
     row = [];
-    if (rows.length > MAX_CSV_ROWS + 1) throw new Error('Import up to 500 shipments at a time.');
+    if (rows.length > MAX_CSV_ROWS + 1) throw new Error(`Import up to ${MAX_CSV_ROWS.toLocaleString('en-US')} shipments at a time.`);
   };
   for (let index = 0; index < text.length; index++) {
     const char = text[index];
