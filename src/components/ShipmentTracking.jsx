@@ -229,9 +229,15 @@ export default function ShipmentTracking({ onSelectOrder }) {
         }
         if (mounted.current) {
           setResults((current) => current.map((value, rowIndex) => rowIndex === index ? { ...value, status: result.status, message: result.message } : value));
-          setSelected((current) => { const next = new Set(current); next.delete(index); return next; });
+          // Saving records tracking but leaves the shipment selected for a later
+          // email. Only completed sends or non-sendable outcomes clear selection.
+          if (!(action === 'save' && result.status === 'saved')) {
+            setSelected((current) => { const next = new Set(current); next.delete(index); return next; });
+          }
           if (['saved', 'accepted'].includes(result.status)) {
             markRecorded(new Set([item.order.id]));
+          }
+          if (result.status === 'accepted') {
             setReferences((current) => ({ ...current, [index]: '' }));
           }
         }
@@ -243,7 +249,7 @@ export default function ShipmentTracking({ onSelectOrder }) {
       active.current = false;
       if (mounted.current) {
         setPhase(''); setConfirmed(false);
-        setProgress(`Processed ${completed} of ${chosen.length} selected shipments. ${stop.current ? 'Batch stopped. Check the results before continuing.' : 'See each result below.'}`);
+        setProgress(`Processed ${completed} of ${chosen.length} selected shipments. ${stop.current ? 'Batch stopped. Check the results before continuing.' : action === 'save' ? 'No emails sent. Saved shipments remain selected; confirm the details again when you are ready to email them.' : 'See each result below.'}`);
         loadHistory();
       }
     }
