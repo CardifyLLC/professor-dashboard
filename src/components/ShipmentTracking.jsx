@@ -78,17 +78,27 @@ export default function ShipmentTracking({ onSelectOrder }) {
 
   const findOrders = async (index, more = false) => {
     if (active.current) return;
-    const email = mappedRows()[index].email.trim().toLowerCase();
+    const row = mappedRows()[index];
+    const email = row.email.trim().toLowerCase();
     if (!validEmail(email)) return;
     const previous = candidates[index]?.email === email ? candidates[index] : null;
     active.current = true; setPhase('lookup');
     setCandidates((current) => ({ ...current, [index]: { ...(more ? previous : {}), email, loading: true, error: '' } }));
     try {
       const data = await trackingRequest({ action: 'candidates', email, offset: more ? previous?.nextOffset ?? 0 : 0 });
-      if (mounted.current) setCandidates((current) => ({ ...current, [index]: {
-        email, loading: false, error: '', nextOffset: data.nextOffset,
-        orders: [...new Map([...(more ? previous?.orders || [] : []), ...data.orders].map((order) => [order.id, order])).values()],
-      } }));
+      if (mounted.current) {
+        const orders = [...new Map([...(more ? previous?.orders || [] : []), ...data.orders].map((order) => [order.id, order])).values()];
+        setCandidates((current) => ({ ...current, [index]: {
+          email, loading: false, error: '', nextOffset: data.nextOffset, orders,
+        } }));
+        const eligible = orders.filter((order) => order.eligible && (showNotified || !order.tracking_recorded));
+        // A partial page cannot establish a unique match. Keep any imported or
+        // manually chosen reference; selecting never saves or sends a shipment.
+        if (!row.reference && data.nextOffset === null && eligible.length === 1) {
+          invalidate();
+          setReferences((current) => current[index] ? current : { ...current, [index]: eligible[0].id });
+        }
+      }
     } catch (err) {
       if (mounted.current) setCandidates((current) => ({ ...current, [index]: { ...current[index], loading: false, error: err.message } }));
     } finally { active.current = false; if (mounted.current) setPhase(''); }
@@ -172,13 +182,13 @@ export default function ShipmentTracking({ onSelectOrder }) {
     <header className="st-heading"><div><p>FULFILLMENT</p><h1 className="page-title">Shipment tracking</h1><span>Import Pirate Ship tracking, verify each order, then save tracking or email your customers.</span></div><Truck size={32} /></header>
     <section className="st-panel">
       <h2>1. Upload your shipment file</h2>
-      <p>Use a Pirate Ship CSV or Excel export. Choose the correct order from each shipment’s dropdown. Orders are found by email and are never selected automatically.</p>
+      <p>Use a Pirate Ship CSV or Excel export. Orders are found by email. A single eligible match is selected automatically after lookup; choose the correct order when there are multiple matches.</p>
       <label className="st-upload"><Upload size={20} /><span>{filename || 'Choose Pirate Ship CSV or Excel'}<small>CSV or .xlsx · up to 500 shipments · 2 MB</small></span><input type="file" accept=".csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" disabled={busy} onChange={upload} /></label>
       {csv && <>
         <div className="st-mappings">
           {Object.entries({ reference: 'Order ID column', tracking: 'Tracking number column', email: 'Email column (search and cross-check)' }).map(([field, label]) => <label key={field}>{label}<select aria-label={label} value={mapping[field]} disabled={busy} onChange={(event) => { invalidate(); setReferences({}); setCandidates({}); setMapping((value) => ({ ...value, [field]: event.target.value })); }}><option value="">{field === 'reference' ? 'Choose orders below' : field === 'tracking' ? 'Choose a column' : 'Not included'}</option>{csv.headers.map((header, index) => <option key={index} value={String(index)}>{header}</option>)}</select></label>)}
         </div>
-        <details className="st-manual" open={mapping.reference === '' ? true : undefined}><summary>2. Choose orders ({csv.rows.length} shipments)</summary><p>Compare the order date, design, card count and delivery address. Each shipment has its own selection, even when several rows use the same email. A single suggested order still requires your choice.</p>
+        <details className="st-manual" open={mapping.reference === '' ? true : undefined}><summary>2. Choose orders ({csv.rows.length} shipments)</summary><p>Compare the order date, design, card count and delivery address before saving or sending. Each shipment has its own selection, even when several rows use the same email.</p>
           <label className="st-notified-filter"><input type="checkbox" checked={showNotified} disabled={busy} onChange={(event) => setShowNotified(event.target.checked)} /> Show orders with tracking (to email saved tracking or add packages)</label>
           <p>Orders with saved tracking or a successfully sent tracking email are hidden by default. Failed sends remain available to retry.</p>
           {mappedRows().map((row, index) => {
