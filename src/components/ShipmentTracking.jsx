@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Upload, Truck, Send, Save, RefreshCw } from 'lucide-react';
-import { suggestColumns, normalizeShipment } from '../../supabase/functions/_shared/shipment-tracking.mjs';
+import { suggestColumns, normalizeShipment, MAX_CSV_ROWS } from '../../supabase/functions/_shared/shipment-tracking.mjs';
 import { trackingRequest } from '../services/shipmentTracking';
 import { readTrackingFile } from '../services/shipmentTrackingFile';
 import './ShipmentTracking.css';
@@ -8,11 +8,13 @@ import './ShipmentTracking.css';
 const formatDate = (value) => value ? new Date(value).toLocaleString() : '—';
 const selectable = (status) => ['ready', 'saved'].includes(status);
 const statusLabel = (status) => status === 'accepted' ? 'Accepted by Gmail' : status === 'saved' ? 'Saved · email not sent' : status;
+const REVIEW_PAGE_SIZE = 100;
 export default function ShipmentTracking() {
   const [csv, setCsv] = useState(null);
   const [filename, setFilename] = useState('');
   const [mapping, setMapping] = useState({ reference: '', tracking: '', carrier: '', email: '' });
   const [results, setResults] = useState([]);
+  const [reviewPage, setReviewPage] = useState(0);
   const [selected, setSelected] = useState(new Set());
   const [confirmed, setConfirmed] = useState(false);
   const [phase, setPhase] = useState('');
@@ -46,7 +48,7 @@ export default function ShipmentTracking() {
     return () => window.removeEventListener('beforeunload', warn);
   }, [phase]);
 
-  const invalidate = () => { setResults([]); setSelected(new Set()); setConfirmed(false); setProgress(''); setError(''); };
+  const invalidate = () => { setResults([]); setReviewPage(0); setSelected(new Set()); setConfirmed(false); setProgress(''); setError(''); };
   const upload = async (event) => {
     const file = event.target.files?.[0];
     event.target.value = '';
@@ -137,6 +139,8 @@ export default function ShipmentTracking() {
   };
 
   const ready = results.map((row, index) => selectable(row.status) ? index : -1).filter((index) => index >= 0);
+  const pageStart = reviewPage * REVIEW_PAGE_SIZE;
+  const visibleResults = results.slice(pageStart, pageStart + REVIEW_PAGE_SIZE);
   const toggle = (index) => { setConfirmed(false); setSelected((current) => { const next = new Set(current); if (next.has(index)) next.delete(index); else next.add(index); return next; }); };
   const busy = !!phase;
 
@@ -145,8 +149,9 @@ export default function ShipmentTracking() {
     <section className="st-panel">
       <h2>1. Upload your shipment file</h2>
       <p>Use a Pirate Ship CSV or Excel export with customer emails and tracking numbers. No order ID is needed. Each tracking number is saved to the customer email and appears in the profile using that verified email.</p>
-      <label className="st-upload"><Upload size={20} /><span>{filename || 'Choose Pirate Ship CSV or Excel'}<small>CSV or .xlsx · up to 500 shipments · 2 MB</small></span><input type="file" accept=".csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" disabled={busy} onChange={upload} /></label>
+      <label className="st-upload"><Upload size={20} /><span>{filename || 'Choose Pirate Ship CSV or Excel'}<small>CSV or .xlsx · up to {MAX_CSV_ROWS.toLocaleString('en-US')} shipments · 2 MB</small></span><input type="file" accept=".csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" disabled={busy} onChange={upload} /></label>
       {csv && <>
+        <p>{csv.rows.length.toLocaleString('en-US')} shipments loaded. Review checks them in batches of 100.</p>
         <div className="st-mappings">
           {Object.entries({ tracking: 'Tracking number column', email: 'Customer email column' }).map(([field, label]) => <label key={field}>{label}<select aria-label={label} value={mapping[field]} disabled={busy} onChange={(event) => changeMapping(field, event.target.value)}><option value="">Choose a column</option>{csv.headers.map((header, index) => <option key={index} value={String(index)}>{header}</option>)}</select></label>)}
         </div>
@@ -157,12 +162,13 @@ export default function ShipmentTracking() {
     {progress && <p className="st-progress" role="status">{progress}</p>}
     {results.length > 0 && <section className="st-panel">
       <h2>2. Review, save or send</h2><p>Both actions save tracking against the customer email and make it visible in the profile with that verified email. Shipments are not assigned to a particular order. “Save tracking only” sends no email. “Send tracking emails” saves and emails each shipment. Existing order details and statuses stay unchanged.</p>
-      <div className="st-table-wrap"><table><thead><tr><th><input type="checkbox" aria-label="Select all ready shipments" checked={ready.length > 0 && ready.every((index) => selected.has(index))} disabled={busy || !ready.length} onChange={(event) => { setSelected(event.target.checked ? new Set(ready) : new Set()); setConfirmed(false); }} /></th><th>Customer email</th><th>Shipment</th><th>Review</th></tr></thead><tbody>{results.map((result, index) => <tr key={index}>
+      <div className="st-history-heading" style={{ flexWrap: 'wrap' }} aria-label="Shipment review pages"><span>Showing shipments {pageStart + 1}–{Math.min(pageStart + REVIEW_PAGE_SIZE, results.length)} of {results.length}. Select all includes ready shipments on every page.</span><div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}><button disabled={busy || reviewPage === 0} onClick={() => setReviewPage((page) => page - 1)}>Previous shipments</button><button disabled={busy || pageStart + REVIEW_PAGE_SIZE >= results.length} onClick={() => setReviewPage((page) => page + 1)}>Next shipments</button></div></div>
+      <div className="st-table-wrap"><table><thead><tr><th><input type="checkbox" aria-label="Select all ready shipments" checked={ready.length > 0 && ready.every((index) => selected.has(index))} disabled={busy || !ready.length} onChange={(event) => { setSelected(event.target.checked ? new Set(ready) : new Set()); setConfirmed(false); }} /></th><th>Customer email</th><th>Shipment</th><th>Review</th></tr></thead><tbody>{visibleResults.map((result, pageIndex) => { const index = pageStart + pageIndex; return <tr key={index}>
         <td><input type="checkbox" aria-label={`Select shipment ${index + 1}`} checked={selected.has(index)} disabled={busy || !selectable(result.status)} onChange={() => toggle(index)} /></td>
         <td><strong>{result.row.email || 'No customer email'}</strong></td>
         <td>{result.row.carrier && <strong>{result.row.carrier}</strong>}<code>{result.row.tracking}</code><small>Shipment {index + 1}</small></td>
         <td><b className={`st-status st-${result.status}`}>{statusLabel(result.status)}</b><p>{result.message}</p>{result.email && <details><summary>Preview email</summary><strong>To: {result.email.to}</strong><small>{result.email.subject}</small><pre>{result.email.text}</pre></details>}</td>
-      </tr>)}</tbody></table></div>
+      </tr>; })}</tbody></table></div>
       <div className="st-send"><label><input type="checkbox" checked={confirmed} disabled={busy || !selected.size} onChange={(event) => setConfirmed(event.target.checked)} /> I checked the selected customer emails and tracking numbers.</label><button onClick={() => processSelected('save')} disabled={busy || !confirmed || !selected.size}><Save size={17} /> Save tracking only ({selected.size})</button><button className="st-primary" onClick={() => processSelected('send')} disabled={busy || !confirmed || !selected.size}><Send size={17} /> Send {selected.size} tracking {selected.size === 1 ? 'email' : 'emails'}</button>{['send', 'save'].includes(phase) && <button onClick={() => { stop.current = true; setProgress('Stopping after the current shipment…'); }}>Stop after current shipment</button>}</div>
     </section>}
     <section className="st-panel"><div className="st-history-heading"><div><h2>Tracking history</h2><p>Latest 100 shipments. Saved means no email was sent. Accepted means Gmail accepted the email; it does not guarantee delivery to the inbox.</p></div><button onClick={loadHistory} disabled={busy || historyLoading}><RefreshCw size={16} /> Refresh</button></div>
