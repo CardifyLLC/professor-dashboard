@@ -45,3 +45,10 @@
 .agent-access .aa-dialog .aa-actions,.agent-access .aa-dialog>button { margin-top:20px; }
 .agent-access .aa-dialog h2 { overflow-wrap:anywhere; }
 @media(max-width:700px) { .agent-access .aa-panel { padding:16px; } .agent-access .aa-heading>svg { display:none; } .agent-access .aa-section-heading { align-items:flex-start; flex-wrap:wrap; } .agent-access .aa-dialog { padding:22px; } }
+
+.agent-access .aa-scopes { flex-basis:100%; display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; border:0; padding:12px 0; margin:8px 0; min-width:0; }
+.agent-access .aa-scopes legend { font-weight:600; padding:0 0 6px; }
+.agent-access .aa-scopes label { display:flex; align-items:flex-start; gap:10px; min-width:0; padding:12px; border:1px solid var(--border-color); border-radius:8px; background:var(--bg-primary); }
+.agent-access .aa-scopes input { width:18px; height:18px; padding:0; margin:2px 0; flex-shrink:0; accent-color:var(--accent-primary,#3b82f6); }
+.agent-access .aa-scopes small { display:block; margin-top:5px; line-height:1.5; }
+@media(max-width:700px) { .agent-access .aa-scopes { grid-template-columns:1fr; } }
