@@ -58,6 +58,68 @@ export default function ShipmentTracking({ onSelectOrder }) {
   }, [phase]);
 
   const invalidate = () => { setResults([]); setSelected(new Set()); setConfirmed(false); setProgress(''); setError(''); };
+  const matchUploadedOrders = async (parsed, columns, includeRecorded = false) => {
+    if (columns.email === '') return;
+    const customers = new Map();
+    parsed.rows.forEach((values, index) => {
+      const email = String(values[Number(columns.email)] || '').trim().toLowerCase();
+      if (!validEmail(email)) return;
+      if (!customers.has(email)) customers.set(email, []);
+      customers.get(email).push(index);
+    });
+    const queue = [...customers.entries()];
+    if (!queue.length) return;
+    setPhase('lookup');
+    let cursor = 0;
+    let completed = 0;
+    setProgress(`Finding matching orders for ${queue.length} customers…`);
+    const worker = async () => {
+      while (mounted.current && cursor < queue.length) {
+        const [email, indexes] = queue[cursor++];
+        const updateMatches = (matches) => setCandidates((current) => {
+          const next = { ...current };
+          indexes.forEach((index) => { next[index] = { email, ...matches }; });
+          return next;
+        });
+        updateMatches({ loading: true, error: '', orders: [] });
+        try {
+          let orders = [];
+          let nextOffset = 0;
+          // Check later pages before declaring a single match. Once two eligible
+          // orders are found, leave the choice to the admin. Bound large histories.
+          for (let page = 0; page < 20 && mounted.current; page++) {
+            const data = await trackingRequest({ action: 'candidates', email, offset: nextOffset });
+            orders = [...new Map([...orders, ...data.orders].map((order) => [order.id, order])).values()];
+            const eligible = orders.filter((order) => order.eligible && (includeRecorded || !order.tracking_recorded));
+            const previousOffset = nextOffset;
+            nextOffset = data.nextOffset;
+            if (nextOffset === null || eligible.length > 1) break;
+            if (!Number.isSafeInteger(nextOffset) || nextOffset <= previousOffset) throw new Error('Unable to check all matching orders. Use Find orders by email to retry.');
+          }
+          if (!mounted.current) return;
+          updateMatches({ loading: false, error: '', orders, nextOffset });
+          const eligible = orders.filter((order) => order.eligible && (includeRecorded || !order.tracking_recorded));
+          if (nextOffset === null && eligible.length === 1) {
+            setReferences((current) => {
+              const next = { ...current };
+              indexes.forEach((index) => {
+                const imported = columns.reference === '' ? '' : parsed.rows[index][Number(columns.reference)];
+                if (!current[index] && !imported) next[index] = eligible[0].id;
+              });
+              return next;
+            });
+          }
+        } catch (err) {
+          if (mounted.current) updateMatches({ loading: false, error: err.message, orders: [] });
+        }
+        completed++;
+        if (mounted.current) setProgress(`Checked ${completed} of ${queue.length} customers. Single eligible orders are selected; review each shipment before saving or sending.`);
+      }
+    };
+    // Reuse one lookup per email, including customers with several packages.
+    await Promise.all(Array.from({ length: Math.min(2, queue.length) }, worker));
+  };
+
   const upload = async (event) => {
     const file = event.target.files?.[0];
     event.target.value = '';
@@ -66,8 +128,21 @@ export default function ShipmentTracking({ onSelectOrder }) {
     invalidate(); setCsv(null); setFilename(''); setReferences({}); setCandidates({}); setShowNotified(false); setPhase('read');
     try {
       const parsed = await readTrackingFile(file);
-      if (mounted.current) { setCsv(parsed); setMapping(suggestColumns(parsed.headers)); setFilename(file.name); }
+      if (mounted.current) {
+        const columns = suggestColumns(parsed.headers);
+        setCsv(parsed); setMapping(columns); setFilename(file.name);
+        await matchUploadedOrders(parsed, columns);
+      }
     } catch (err) { if (mounted.current) setError(err.message); }
+    finally { active.current = false; if (mounted.current) setPhase(''); }
+  };
+
+  const changeMapping = async (field, column) => {
+    if (active.current) return;
+    active.current = true;
+    const columns = { ...mapping, [field]: column };
+    invalidate(); setReferences({}); setCandidates({}); setMapping(columns);
+    try { await matchUploadedOrders(csv, columns, showNotified); }
     finally { active.current = false; if (mounted.current) setPhase(''); }
   };
 
@@ -182,11 +257,11 @@ export default function ShipmentTracking({ onSelectOrder }) {
     <header className="st-heading"><div><p>FULFILLMENT</p><h1 className="page-title">Shipment tracking</h1><span>Import Pirate Ship tracking, verify each order, then save tracking or email your customers.</span></div><Truck size={32} /></header>
     <section className="st-panel">
       <h2>1. Upload your shipment file</h2>
-      <p>Use a Pirate Ship CSV or Excel export. Orders are found by email. A single eligible match is selected automatically after lookup; choose the correct order when there are multiple matches.</p>
+      <p>Use a Pirate Ship CSV or Excel export. Orders are found by email as soon as the file loads. A single eligible match is selected automatically; choose the correct order when there are multiple matches.</p>
       <label className="st-upload"><Upload size={20} /><span>{filename || 'Choose Pirate Ship CSV or Excel'}<small>CSV or .xlsx · up to 500 shipments · 2 MB</small></span><input type="file" accept=".csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" disabled={busy} onChange={upload} /></label>
       {csv && <>
         <div className="st-mappings">
-          {Object.entries({ reference: 'Order ID column', tracking: 'Tracking number column', email: 'Email column (search and cross-check)' }).map(([field, label]) => <label key={field}>{label}<select aria-label={label} value={mapping[field]} disabled={busy} onChange={(event) => { invalidate(); setReferences({}); setCandidates({}); setMapping((value) => ({ ...value, [field]: event.target.value })); }}><option value="">{field === 'reference' ? 'Choose orders below' : field === 'tracking' ? 'Choose a column' : 'Not included'}</option>{csv.headers.map((header, index) => <option key={index} value={String(index)}>{header}</option>)}</select></label>)}
+          {Object.entries({ reference: 'Order ID column', tracking: 'Tracking number column', email: 'Email column (search and cross-check)' }).map(([field, label]) => <label key={field}>{label}<select aria-label={label} value={mapping[field]} disabled={busy} onChange={(event) => changeMapping(field, event.target.value)}><option value="">{field === 'reference' ? 'Choose orders below' : field === 'tracking' ? 'Choose a column' : 'Not included'}</option>{csv.headers.map((header, index) => <option key={index} value={String(index)}>{header}</option>)}</select></label>)}
         </div>
         <details className="st-manual" open={mapping.reference === '' ? true : undefined}><summary>2. Choose orders ({csv.rows.length} shipments)</summary><p>Compare the order date, design, card count and delivery address before saving or sending. Each shipment has its own selection, even when several rows use the same email.</p>
           <label className="st-notified-filter"><input type="checkbox" checked={showNotified} disabled={busy} onChange={(event) => setShowNotified(event.target.checked)} /> Show orders with tracking (to email saved tracking or add packages)</label>
@@ -201,7 +276,7 @@ export default function ShipmentTracking({ onSelectOrder }) {
               <h3>Shipment {index + 1} · <code>{row.tracking || 'No tracking number'}</code></h3>
               <p>{row.email || 'No email column selected'}{csv.headers.map((header, column) => /^(recipient|created date|batch)$/i.test(header) && csv.rows[index][column] ? <small key={column}>{header}: {csv.rows[index][column]}</small> : null)}</p>
               <div className="st-choice-controls">
-                <label>Choose customer’s order<select aria-label={`Order for shipment ${index + 1}`} value={row.reference} disabled={busy && !matches?.loading} onFocus={() => { if (!matches && validEmail(row.email.trim())) findOrders(index); }} onChange={(event) => selectOrder(index, event.target.value)}>
+                <label>Choose customer’s order<select aria-label={`Order for shipment ${index + 1}`} value={row.reference} disabled={busy} onFocus={() => { if (!matches && validEmail(row.email.trim())) findOrders(index); }} onChange={(event) => selectOrder(index, event.target.value)}>
                   <option value="">{matches?.loading ? 'Finding matching orders…' : matches?.orders?.length === 0 ? 'No matching orders found' : matches && visibleOrders.length === 0 ? 'No orders without tracking on this page' : 'Choose an order…'}</option>
                   {row.reference && !chosenOrder && <option value={row.reference}>Imported / entered reference: {row.reference}</option>}
                   {visibleOrders.map((order) => <option key={order.id} value={order.id} disabled={!order.eligible || matches.loading}>{orderOption(order)}</option>)}
