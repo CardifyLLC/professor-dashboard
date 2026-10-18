@@ -20,6 +20,7 @@ import SharedDeckRequests from './SharedDeckRequests';
 import PrintsAnalytics from './PrintsAnalytics';
 import EmailCampaignHistory from './EmailCampaignHistory';
 import ShipmentTracking from './ShipmentTracking';
+import AgentAccess from './AgentAccess';
 import useOrderLink from '../hooks/useOrderLink';
 
 const Dashboard = () => {
@@ -205,6 +206,14 @@ const Dashboard = () => {
                                 style={{ width: '100%', font: 'inherit', textAlign: 'left' }}
                             >
                                 <span>🚚</span> Shipment tracking
+                            </button>
+                            <button
+                                type="button"
+                                className={'nav-item ' + (activeView === 'agent-access' ? 'active' : '')}
+                                onClick={() => { setActiveView('agent-access'); setMobileMenuOpen(false); }}
+                                style={{ width: '100%', font: 'inherit', textAlign: 'left' }}
+                            >
+                                <span>🔑</span> Agent Access
                             </button>
                             <div
                                 className={`nav-item ${activeView === 'customers' ? 'active' : ''}`}
@@ -485,6 +494,9 @@ const Dashboard = () => {
 
                                     {activeView === 'shipment-tracking' && (
                                         <ShipmentTracking />
+                                    )}
+                                    {activeView === 'agent-access' && (
+                                        <AgentAccess />
                                     )}
 
                                     {activeView === 'prints-analytics' && (
