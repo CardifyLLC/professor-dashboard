@@ -92,13 +92,15 @@ export function validEmail(value) {
 }
 
 export function normalizeShipment(input = {}) {
-  const reference = identifier(input.reference);
+  const emailOnly = input.mode === 'email';
+  const reference = emailOnly ? '' : identifier(input.reference);
   const rawTracking = identifier(input.tracking);
   const tracking = rawTracking.replace(/[\s-]/g, '').toUpperCase();
   const carrier = normalizeCarrier(input.carrier) || detectCarrier(tracking);
   const email = typeof input.email === 'string' ? input.email.trim().toLowerCase() : '';
-  const row = { reference: UUID.test(reference) ? reference.toLowerCase() : reference, tracking, carrier, email };
-  if (!referenceType(reference)) return { row, error: 'Enter the full TCGPlaytest order ID (UUID), saved Stripe Checkout session ID, or tempOrderId. Email is not an order ID.' };
+  const row = { reference: UUID.test(reference) ? reference.toLowerCase() : reference, tracking, carrier, email, ...(emailOnly ? { mode: 'email' } : {}) };
+  if (emailOnly && !validEmail(email)) return { row, error: 'Choose a valid customer email column.' };
+  if (!emailOnly && !referenceType(reference)) return { row, error: 'Enter the full TCGPlaytest order ID (UUID), saved Stripe Checkout session ID, or tempOrderId. Email is not an order ID.' };
   if (/^[-+]?\d+(?:\.\d+)?e[-+]?\d+$/i.test(rawTracking) || !/^[A-Z0-9]{8,40}$/.test(tracking)) return { row, error: 'Invalid tracking number. Use the original CSV; spreadsheet rounding or scientific notation cannot be recovered.' };
   if (tracking.startsWith('AHOY') && carrier !== 'Asendia') return { row, error: 'AHOY tracking conflicts with the carrier in this file. Correct or remove the Carrier / Service column.' };
   if (email && !validEmail(email)) return { row, error: 'The CSV email is invalid. Check the column mapping.' };
@@ -139,19 +141,20 @@ export function orderProblem(order, row) {
 
 const escapeHtml = (value) => String(value).replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
 export function buildTrackingEmail(order, shipment) {
+  const emailOnly = shipment.mode === 'email';
   const address = order.shipping_address?.address || order.shipping_address || {};
   const destination = [address.city, address.state, address.postal_code || address.zip, address.country].filter(Boolean).join(', ');
   const date = new Date(order.created_at).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric', timeZone: 'UTC' });
   const details = [
-    ['Order', order.id], ['Order date', date], ['Cards', order.quantity],
+    ...(!emailOnly ? [['Order', order.id], ['Order date', date], ['Cards', order.quantity]] : []),
     ...(order.design_name || order.uploaded_xml_filename ? [['Design', order.design_name || order.uploaded_xml_filename]] : []),
     ...(destination ? [['Destination', destination]] : []),
     ...(shipment.carrier ? [['Carrier', shipment.carrier]] : []), ['Tracking number', shipment.tracking],
   ];
   const url = trackingUrl(shipment.carrier, shipment.tracking);
   const greeting = order.customer_name ? `Hi ${order.customer_name},` : 'Hi,';
-  const note = 'A shipping label has been created for this order. Tracking updates appear after the carrier scans your package.';
-  const subject = `Tracking for your TCGPlaytest order ${order.id}`;
+  const note = 'A shipping label has been created for your package. Tracking updates appear after the carrier scans your package.';
+  const subject = emailOnly ? 'Tracking for your TCGPlaytest shipment' : `Tracking for your TCGPlaytest order ${order.id}`;
   const trackingText = url ? `Track your package: ${url}` : 'Use the tracking number above on your carrier’s tracking website. If you need help finding the carrier, reply to this email.';
   const trackingHtml = url ? `<p style="margin:28px 0"><a href="${escapeHtml(url)}" style="background:#123459;color:white;padding:14px 20px;border-radius:8px;text-decoration:none">Track your package</a></p>` : `<p>${escapeHtml(trackingText)}</p>`;
   const text = `${greeting}\n\nYour order tracking is ready.\n\n${details.map(([label, value]) => `${label}: ${value}`).join('\n')}\n\n${trackingText}\n\n${note}\n\nQuestions? Reply to this email or contact support@tcgplaytest.com.\n\nTCGPlaytest`;

@@ -9,9 +9,12 @@ const stable = (value) => JSON.stringify(value, function (_key, item) {
 export async function reviewShipments(inputs, repository) {
   const normalized = inputs.map(normalizeShipment);
   const valid = normalized.filter((item) => !item.error).map((item) => item.row);
-  const [orders, notifications] = await Promise.all([
-    repository.lookupOrders([...new Set(valid.map((row) => row.reference))]),
+  const emails = [...new Set(valid.filter((row) => row.mode === 'email').map((row) => row.email))];
+  const references = [...new Set(valid.filter((row) => row.mode !== 'email').map((row) => row.reference))];
+  const [orders, notifications, customers] = await Promise.all([
+    references.length ? repository.lookupOrders(references) : [],
     repository.lookupNotifications([...new Set(valid.map((row) => row.tracking))]),
+    emails.length ? repository.lookupCustomers(emails) : [],
   ]);
   const counts = new Map();
   for (const { row } of normalized) if (row.tracking) counts.set(row.tracking, (counts.get(row.tracking) || 0) + 1);
@@ -19,6 +22,19 @@ export async function reviewShipments(inputs, repository) {
     const result = { row, status: 'blocked', message: error, order: null };
     if (error) return result;
     if (counts.get(row.tracking) > 1) return { ...result, message: 'Tracking number appears more than once in this batch. Keep one verified row.' };
+    if (row.mode === 'email') {
+      if (!customers.some((customer) => customer.email === row.email)) return { ...result, message: 'No customer with this email was found. Check the email column.' };
+      const notification = notifications.find((item) => item.tracking_number === row.tracking);
+      if (notification) {
+        if (notification.recipient_email?.trim().toLowerCase() !== row.email || notification.carrier !== row.carrier) return { ...result, message: 'This tracking number is already assigned to a different customer or carrier.' };
+        if (notification.status === 'accepted') return { ...result, status: 'accepted', message: 'Already accepted by Gmail. This email will not be sent again.' };
+        if (!['saved', 'failed'].includes(notification.status)) return { ...result, status: notification.status, message: 'Email outcome unconfirmed. Check Gmail and history before resending.' };
+      }
+      const snapshot = { customer_email: row.email };
+      return { ...result, status: notification?.status === 'saved' ? 'saved' : 'ready', customer: snapshot, snapshot,
+        message: notification?.status === 'saved' ? 'Tracking saved for this email. No email sent yet.' : 'Customer email found. Ready for your review.',
+        email: buildTrackingEmail(snapshot, row) };
+    }
     const matches = orders.filter((order) => [order.id, order.stripe_session_id, order.temp_order_id].includes(row.reference));
     if (matches.length !== 1) return { ...result, message: matches.length ? 'This reference matches multiple orders. Use the full order UUID.' : 'No exact order match. Enter the full order ID from the dashboard.' };
     const order = matches[0];
@@ -29,9 +45,10 @@ export async function reviewShipments(inputs, repository) {
     if (notification) {
       if (notification.order_id !== order.id || notification.carrier !== row.carrier) return { ...result, message: 'This tracking number is already assigned to a different order or carrier.' };
       if (notification.status === 'accepted') return { ...result, status: 'accepted', message: 'Already accepted by Gmail. This email will not be sent again.' };
-      if (notification.status !== 'failed') return { ...result, status: notification.status, message: 'Sending or delivery outcome unconfirmed. Check Gmail and the history before attempting any resend.' };
+      if (!['saved', 'failed'].includes(notification.status)) return { ...result, status: notification.status, message: 'Sending or delivery outcome unconfirmed. Check Gmail and the history before attempting any resend.' };
     }
-    return { ...result, status: 'ready', message: notification ? 'Previous attempt was rejected by Gmail. Review before retrying.' : 'Exact order match. Ready for your review.', snapshot: orderSnapshot(order), email: buildTrackingEmail(order, row) };
+    const saved = notification?.status === 'saved';
+    return { ...result, status: saved ? 'saved' : 'ready', message: saved ? 'Tracking saved. No email sent yet. You can send it now.' : notification ? 'Previous attempt was rejected by Gmail. Review before retrying.' : 'Exact order match. Ready for your review.', snapshot: orderSnapshot(order), email: buildTrackingEmail(order, row) };
   });
 }
 
@@ -68,10 +85,10 @@ export function createShipmentTrackingHandler({ requireAdmin, repository, mailer
         // Suggestions never become a selected order. Sending still requires an exact
         // reference, reviewed snapshot and an atomic claim, just like CSV imports.
         const matching = page.orders.filter((order) => order.customer_email?.toLowerCase() === email);
-        const notified = new Set(await repository.notifiedOrderIds(matching.map((order) => order.id)));
+        const recorded = new Set(await repository.recordedOrderIds(matching.map((order) => order.id)));
         const orders = matching.map((order) => {
           const reason = orderProblem(order, { email });
-          return { ...order, eligible: !reason, reason, tracking_notified: notified.has(order.id) };
+          return { ...order, eligible: !reason, reason, tracking_recorded: recorded.has(order.id) };
         });
         return json(200, { orders, nextOffset: page.nextOffset });
       }
@@ -79,19 +96,24 @@ export function createShipmentTrackingHandler({ requireAdmin, repository, mailer
         if (!Array.isArray(body.rows) || !body.rows.length || body.rows.length > 100 || body.rows.some((row) => !row || typeof row !== 'object')) return json(400, { error: 'Review 1–100 shipments per request.' });
         return json(200, { results: await reviewShipments(body.rows, repository) });
       }
-      if (body.action !== 'send' || !body.row || !body.snapshot || !body.orderId) return json(400, { error: 'Review the order before sending.' });
+      if (!['send', 'save'].includes(body.action) || !body.row || !body.snapshot || (body.row.mode !== 'email' && !body.orderId)) return json(400, { error: 'Review the shipment before saving or sending.' });
       const [review] = await reviewShipments([body.row], repository);
       if (review.status === 'accepted') return json(200, { status: 'accepted', message: review.message });
-      if (review.status !== 'ready') return json(409, { error: review.message });
-      if (review.order.id !== body.orderId || stable(body.snapshot) !== stable(review.snapshot)) return json(409, { error: 'Order details changed. Review this shipment again.' });
+      if (!['ready', 'saved'].includes(review.status)) return json(409, { error: review.message });
+      const emailOnly = review.row.mode === 'email';
+      if ((!emailOnly && review.order.id !== body.orderId) || stable(body.snapshot) !== stable(review.snapshot)) return json(409, { error: 'Details changed. Review this shipment again.' });
+      if (body.action === 'save') {
+        const saved = emailOnly ? await repository.recordEmail(review.row, review.snapshot, admin.id, false) : await repository.save(review.order.id, review.row, review.snapshot, admin.id);
+        return json(200, { status: saved.notification.status, message: saved.notification.status === 'saved' ? 'Tracking saved. No email sent.' : 'Tracking is already saved. No new email sent.' });
+      }
       // Check credentials before creating a send claim. No Gmail request is retried automatically.
       const preparedMailer = await mailer.prepare();
-      const claim = await repository.claim(review.order.id, review.row, review.snapshot, admin.id);
+      const claim = emailOnly ? await repository.recordEmail(review.row, review.snapshot, admin.id, true) : await repository.claim(review.order.id, review.row, review.snapshot, admin.id);
       const record = claim.notification;
       if (!claim.claimed) return json(200, { status: record.status, message: 'This shipment was already submitted. Check its history.' });
       let outcome;
       try {
-        const email = buildTrackingEmail(record.order_snapshot, review.row);
+        const email = buildTrackingEmail(emailOnly ? { customer_email: record.recipient_email } : record.order_snapshot, review.row);
         const messageId = await preparedMailer.send(email, record.id);
         outcome = { status: 'accepted', gmail_message_id: messageId, accepted_at: new Date().toISOString(), error: null };
       } catch (error) {
@@ -106,6 +128,8 @@ export function createShipmentTrackingHandler({ requireAdmin, repository, mailer
         TRACKING_ALREADY_ASSIGNED: 'This tracking number belongs to another order or carrier.',
         ORDER_NOT_ELIGIBLE: 'This order is no longer eligible for a tracking email.',
         ORDER_NOT_FOUND: 'The order no longer exists.',
+        CUSTOMER_NOT_FOUND: 'No customer with this email was found. Check the email column.',
+        CUSTOMER_CHANGED_REVIEW_AGAIN: 'Customer details changed. Review the shipment again.',
         MAIL_CONFIG: 'Tracking email is not configured. Check the existing Gmail secrets in Supabase.',
         MAIL_AUTH: 'Gmail authorization failed. Check the service account and delegated sender.',
       };

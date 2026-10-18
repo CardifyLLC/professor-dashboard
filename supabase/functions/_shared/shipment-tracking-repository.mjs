@@ -1,7 +1,7 @@
 import { referenceType, validEmail } from './shipment-tracking.mjs';
 
 const ORDER_FIELDS = 'id,stripe_session_id,customer_name,customer_email,created_at,quantity,status,payment_status,shipping_address,uploaded_xml_filename,design_name:metadata->>designName,temp_order_id:metadata->>tempOrderId';
-const NOTIFICATION_FIELDS = 'id,order_id,tracking_number,carrier,recipient_email,status,attempts,attempted_at,accepted_at,gmail_message_id,error';
+const NOTIFICATION_FIELDS = 'id,order_id,tracking_number,carrier,recipient_email,status,attempts,created_at,attempted_at,accepted_at,gmail_message_id,error';
 
 export function createTrackingRepository({ url, serviceKey, fetchImpl = fetch }) {
   async function rest(path, params = {}, options = {}) {
@@ -16,7 +16,7 @@ export function createTrackingRepository({ url, serviceKey, fetchImpl = fetch })
       let code = 'DATABASE_REQUEST_FAILED';
       try {
         const error = await response.json();
-        const known = ['ORDER_CHANGED_REVIEW_AGAIN', 'TRACKING_ALREADY_ASSIGNED', 'ORDER_NOT_ELIGIBLE', 'ORDER_NOT_FOUND'];
+        const known = ['ORDER_CHANGED_REVIEW_AGAIN', 'TRACKING_ALREADY_ASSIGNED', 'ORDER_NOT_ELIGIBLE', 'ORDER_NOT_FOUND', 'CUSTOMER_NOT_FOUND', 'CUSTOMER_CHANGED_REVIEW_AGAIN'];
         code = known.find((item) => String(error.message).includes(item)) || code;
       } catch { /* Never put database details or customer records into logs. */ }
       throw new Error(code);
@@ -35,6 +35,10 @@ export function createTrackingRepository({ url, serviceKey, fetchImpl = fetch })
     return rows;
   }
   return {
+    lookupCustomers: (emails) => rest('rpc/shipment_tracking_customers', {}, { method: 'POST', body: JSON.stringify({ p_emails: emails }) }),
+    recordEmail: (shipment, expected, actor, send) => rest('rpc/record_email_shipment', {}, {
+      method: 'POST', body: JSON.stringify({ p_email: shipment.email, p_tracking_number: shipment.tracking, p_carrier: shipment.carrier, p_expected: expected, p_actor: actor, p_send: send }),
+    }),
     async findOrdersByEmail(email, offset = 0) {
       if (!validEmail(email) || !Number.isSafeInteger(offset) || offset < 0 || offset > 100000) throw new Error('INVALID_EMAIL_SEARCH');
       // Anchored, escaped case-insensitive regex: %, _, + and * in an address
@@ -48,16 +52,16 @@ export function createTrackingRepository({ url, serviceKey, fetchImpl = fetch })
       const results = await Promise.all(groups.map((field) => lookup('orders', field, references.filter((value) => referenceType(value) === field), ORDER_FIELDS)));
       return [...new Map(results.flat().map((row) => [row.id, row])).values()];
     },
-    async notifiedOrderIds(orderIds) {
+    async recordedOrderIds(orderIds) {
       const notified = new Set();
       for (let offset = 0; offset < orderIds.length; offset += 50) {
         const ids = orderIds.slice(offset, offset + 50);
         let after;
-        // Read durable successful receipts, not the latest-100 history panel.
+        // Read durable saved associations and successful receipts, not recent history.
         // Keyset pagination also covers orders with many separate packages.
         while (true) {
           const rows = await rest('shipment_tracking_notifications', {
-            select: 'id,order_id', status: 'eq.accepted',
+            select: 'id,order_id', status: 'in.(saved,accepted)',
             order_id: `in.(${ids.join(',')})`, order: 'id.asc', limit: '500',
             ...(after ? { id: `gt.${after}` } : {}),
           });
@@ -70,6 +74,9 @@ export function createTrackingRepository({ url, serviceKey, fetchImpl = fetch })
     },
     lookupNotifications: (values) => lookup('shipment_tracking_notifications', 'tracking_number', values, NOTIFICATION_FIELDS),
     history: () => rest('shipment_tracking_notifications', { select: NOTIFICATION_FIELDS, order: 'created_at.desc', limit: '100' }),
+    save: (orderId, shipment, expected, actor) => rest('rpc/save_order_shipment', {}, {
+      method: 'POST', body: JSON.stringify({ p_order_id: orderId, p_tracking_number: shipment.tracking, p_carrier: shipment.carrier, p_expected: expected, p_actor: actor }),
+    }),
     claim: (orderId, shipment, expected, actor) => rest('rpc/claim_shipment_tracking_notification', {}, {
       method: 'POST', body: JSON.stringify({ p_order_id: orderId, p_tracking_number: shipment.tracking, p_carrier: shipment.carrier, p_expected: expected, p_actor: actor }),
     }),
