@@ -10,6 +10,20 @@ function offsetFor(params) {
   if (!/^\d{1,6}$/.test(offset)) throw new SectionReadError(400, 'Invalid page.');
   return Number(offset);
 }
+function orderDateRange(params, section) {
+  if (!params.has('from') && !params.has('before')) return {};
+  if (section !== 'orders' || params.has('id')) throw new SectionReadError(400, 'Date filters apply only to the orders list.');
+  const range = {};
+  for (const name of ['from', 'before']) {
+    if (!params.has(name)) continue;
+    const value = params.get(name);
+    const date = new Date(value);
+    if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value) || !Number.isFinite(date.getTime()) || date.toISOString() !== value) throw new SectionReadError(400, 'Invalid order date filter.');
+    range[name] = value;
+  }
+  if (range.from && range.before && range.from >= range.before) throw new SectionReadError(400, 'From date cannot be after To date.');
+  return range;
+}
 // Fixed tables and field lists, shared by Team Access and Agent Access.
 const DATA = {
   orders: { table: 'orders', select: 'id,created_at,customer_name,customer_email,design_name:metadata->>designName,quantity,status,total_amount_cents,currency', search: 'customer_email' },
@@ -25,10 +39,11 @@ const DATA = {
 const ORDER_DETAIL = DATA.orders.select + ',stripe_session_id,updated_at,customer_phone,shipping_address,payment_status,deck_quantity,shipping_cost_cents,discount_amount_cents,payment_source,payment_provider,wallet_prints_spent,completed_at,refunded_at,refund_reason_key';
 
 export async function readSection(db, params) {
-  if ([...params.keys()].some(key => !['section','offset','q','id'].includes(key) || params.getAll(key).length !== 1)) throw new SectionReadError(400, 'Unsupported request parameters.');
+  if ([...params.keys()].some(key => !['section','offset','q','id','from','before'].includes(key) || params.getAll(key).length !== 1)) throw new SectionReadError(400, 'Unsupported request parameters.');
   const section = params.get('section');
   const config = Object.hasOwn(DATA, section || '') ? DATA[section] : null;
   if (!config) throw new SectionReadError(403, 'Unsupported section.');
+  const dates = orderDateRange(params, section);
   const offset = offsetFor(params);
   if (params.has('id')) {
     if (!['orders', 'email-history'].includes(section) || !UUID.test(params.get('id')) || params.has('offset') || params.has('q')) throw new SectionReadError(400, 'Invalid detail request.');
@@ -52,6 +67,9 @@ export async function readSection(db, params) {
   if (!config.sort) query = query.order('id');
   if (config.filter) query = query.eq(...config.filter);
   if (search) query = section === 'orders' && UUID.test(search) ? query.eq('id', search) : query.ilike(config.search, '%' + search.replace(/[\\%_]/g, '\\$&') + '%');
+  if (dates.from) query = query.gte('created_at', dates.from);
+  // Exclusive next local midnight includes fractional timestamps and DST-length days.
+  if (dates.before) query = query.lt('created_at', dates.before);
   const raw = fail(await query.range(offset, offset + PAGE));
   let rows = raw.slice(0, PAGE).map(row => project(row, fieldsOf(config.select)));
   if (section === 'prints' && rows.length) {

@@ -135,7 +135,7 @@ export function createDashboardReadHandler({ createClient, env = process.env, fe
       const access = createAccess({ createClient, env, fetchImpl });
       const identity = await access.authenticate(request);
       const permissions = await access.permissions(identity, true);
-      const params = paramsFor(request, ['section', 'offset', 'q', 'id']);
+      const params = paramsFor(request, ['section', 'offset', 'q', 'id', 'from', 'before']);
       const section = params.get('section');
       if (!TEAM_PERMISSION_IDS.includes(section) || !permissions.permissions.includes(section)) throw new HttpError(403, 'You do not have access to this section.');
       const data = await readSection(access.db(), params);
