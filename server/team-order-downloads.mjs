@@ -1,4 +1,5 @@
 import { createDashboardAuthorization, DashboardAccessError as HttpError } from './dashboard-access.mjs';
+import { pacificDayRange } from '../shared/pacific-date.mjs';
 
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
 const fail = result => { if (result.error) throw new HttpError(503, 'Order PDFs are unavailable. Please retry.'); return result.data; };
@@ -22,15 +23,34 @@ export function createTeamOrderDownloadsHandler({ createClient, env = process.en
       const identity = await access.authenticate(request), grant = await access.permissions(identity, true);
       if (!['orders','order-downloads'].every(scope => grant.permissions.includes(scope))) throw new HttpError(403, 'Ask an administrator to enable Orders & customers and Download order PDFs.');
       const params = new URL(request.url, 'https://dashboard.invalid').searchParams;
-      if ([...params.keys()].some(key => !['order','type','index'].includes(key) || params.getAll(key).length !== 1)) throw new HttpError(400,'Unsupported download parameters.');
       const id = params.get('order'), type = params.get('type') || 'manifest';
+      const allowed = type === 'day' ? ['type','date','offset'] : ['order','type','index'];
+      if ([...params.keys()].some(key => !allowed.includes(key) || params.getAll(key).length !== 1)) throw new HttpError(400,'Unsupported download parameters.');
+      const db = access.db();
+      const recheck = async () => { await access.recheck(identity,'orders'); await access.recheck(identity,'order-downloads'); };
+      if (type === 'day') {
+        let range;
+        try { range = pacificDayRange(params.get('date')); } catch { throw new HttpError(400,'Choose a valid order date.'); }
+        const offsetText = params.get('offset') ?? '0';
+        if (!/^(0|[1-9]\d{0,6})$/.test(offsetText) || Number(offsetText) > 1000000) throw new HttpError(400,'Invalid download offset.');
+        const offset = Number(offsetText), pageSize = 100;
+        const rows = fail(await db.from('orders').select('id')
+          .gte('created_at',range.from).lt('created_at',range.before)
+          .order('created_at',{ascending:true}).order('id',{ascending:true}).range(offset,offset+pageSize));
+        const ids = rows.slice(0,pageSize).map(row => row.id);
+        const generations = ids.length ? fail(await db.from('order_pdf_generations')
+          .select('order_id,status,storage_path,storage_paths,total_parts').in('order_id',ids).eq('status','completed')) : [];
+        const byId = new Map(generations.map(row => [row.order_id,row]));
+        const orders = ids.map(orderId => ({orderId,parts:pdfPaths(byId.get(orderId),orderId).length})).filter(order => order.parts > 0);
+        await recheck();
+        // No storage paths or signed links in the listing. Every part requires a fresh permission check.
+        return send(200,{date:params.get('date'),orders,nextOffset:rows.length>pageSize ? offset+pageSize : null});
+      }
       if (!UUID.test(id || '') || !['manifest','pdf'].includes(type)) throw new HttpError(400,'Invalid order or download type.');
       if (type === 'pdf' ? !/^\d{1,5}$/.test(params.get('index') || '') : params.has('index')) throw new HttpError(400,'Invalid PDF selection.');
-      const db = access.db();
       if (!fail(await db.from('orders').select('id').eq('id',id).maybeSingle())) throw new HttpError(404,'Order not found.');
       const generation = fail(await db.from('order_pdf_generations').select('order_id,status,storage_path,storage_paths,total_parts').eq('order_id',id).maybeSingle());
       const paths = pdfPaths(generation,id);
-      const recheck = async () => { await access.recheck(identity,'orders'); await access.recheck(identity,'order-downloads'); };
       await recheck();
       let data = { pdf:{status:paths.length ? 'completed' : generation?.status || 'unavailable', parts:paths.length} };
       if (type === 'pdf') {
