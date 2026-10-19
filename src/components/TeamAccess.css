@@ -43,6 +43,9 @@
 .ta-viewer .ta-search label { flex:1; min-width:200px; max-width:550px; }
 .ta-viewer .ta-search .ta-date-filter { flex:1 1 150px; min-width:140px; max-width:180px; }
 .ta-viewer .ta-date-filter input { color-scheme:dark; }
+.ta-status-filters { display:flex; flex-wrap:wrap; gap:12px; margin:20px 0; }
+.ta-status-filters button { border-radius:999px; background:var(--bg-primary,#0a101c); color:var(--text-muted,#94a3b8); }
+.ta-status-filters button[aria-pressed=true] { color:#fff; background:#2563eb26; border-color:#3b82f6; }
 .ta-viewer dl { display:grid; grid-template-columns:minmax(120px,1fr) minmax(0,2fr); gap:12px; margin:20px 0; }
 .ta-viewer dt { color:var(--text-muted,#94a3b8); }
 .ta-viewer dd { margin:0; overflow-wrap:anywhere; white-space:pre-line; }

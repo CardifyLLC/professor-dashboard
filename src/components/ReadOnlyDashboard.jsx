@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ShieldCheck, LogOut, RefreshCw } from 'lucide-react';
 import { TEAM_SECTIONS, BATCHER_PERMISSION } from '../../shared/team-permissions.mjs';
+import { ORDER_STATUSES } from '../../shared/order-statuses.mjs';
 import { dashboardAccessRequest } from '../services/dashboardAccess';
 import { supabase } from '../services/supabaseClient';
 import { orderLink, restoreOrderAfterSignIn, validOrderId } from '../services/orderLinks.mjs';
@@ -23,6 +24,7 @@ export default function ReadOnlyDashboard({ access, onAccessLost }) {
   const [rows, setRows] = useState([]), [offset, setOffset] = useState(0), [nextOffset, setNextOffset] = useState(null);
   const [search, setSearch] = useState(''), [appliedSearch, setAppliedSearch] = useState('');
   const [dateFrom, setDateFrom] = useState(''), [dateTo, setDateTo] = useState('');
+  const [status, setStatus] = useState('all');
   const [loading, setLoading] = useState(true), [error, setError] = useState('');
   const [detail, setDetail] = useState(null), [detailError, setDetailError] = useState(''), [detailLoading, setDetailLoading] = useState(false);
   const modal = useRef(null), generation = useRef(0), detailGeneration = useRef(0);
@@ -35,6 +37,7 @@ export default function ReadOnlyDashboard({ access, onAccessLost }) {
     try {
       const params = new URLSearchParams({ section, offset: String(page), q: appliedSearch });
       if (section === 'orders') {
+        if (status !== 'all') params.set('status', status);
         if (dateFrom && dateTo && dateFrom > dateTo) throw new Error('From date cannot be after To date.');
         // Match the normal dashboard's local calendar dates, including the whole end date.
         if (dateFrom) params.set('from', new Date(dateFrom + 'T00:00:00').toISOString());
@@ -48,7 +51,7 @@ export default function ReadOnlyDashboard({ access, onAccessLost }) {
       if (version === generation.current) { setRows(result.rows); setOffset(page); setNextOffset(result.nextOffset); }
     } catch (err) { if (version === generation.current) { setError(err.message); if ([401, 403].includes(err.status)) onAccessLost(); } }
     finally { if (version === generation.current) setLoading(false); }
-  }, [section, appliedSearch, dateFrom, dateTo, onAccessLost]);
+  }, [section, appliedSearch, dateFrom, dateTo, status, onAccessLost]);
   useEffect(() => { const counter = generation; load(0); return () => { counter.current++; }; }, [load]);
   const openDetail = useCallback(async (id, kind) => {
     const version = ++detailGeneration.current;
@@ -78,7 +81,7 @@ export default function ReadOnlyDashboard({ access, onAccessLost }) {
     detailGeneration.current++; modal.current?.close(); setDetail(null); setDetailError(''); setDetailLoading(false);
     window.history.replaceState(null, '', orderLink(null));
   };
-  const selectSection = id => { generation.current++; close(); setSection(id); setSearch(''); setAppliedSearch(''); setDateFrom(''); setDateTo(''); setRows([]); };
+  const selectSection = id => { generation.current++; close(); setSection(id); setSearch(''); setAppliedSearch(''); setDateFrom(''); setDateTo(''); setStatus('all'); setRows([]); };
   const openRow = row => {
     if (section === 'orders') window.history.pushState(null, '', orderLink(row.id));
     openDetail(row.id, section);
@@ -109,6 +112,9 @@ export default function ReadOnlyDashboard({ access, onAccessLost }) {
         {section === 'orders' && (dateFrom || dateTo) && <button type="button" onClick={() => { setDateFrom(''); setDateTo(''); }}>Clear dates</button>}
       </form>}
       {section === 'orders' && <p id="order-date-help" className="ta-small">Dates use your local time and include the full To date.</p>}
+      {section === 'orders' && <div className="ta-status-filters" role="group" aria-label="Order status">
+        {['all', ...ORDER_STATUSES].map(value => <button key={value} type="button" aria-pressed={status === value} onClick={() => setStatus(value)}>{value[0].toUpperCase() + value.slice(1)}</button>)}
+      </div>}
       {section === 'orders' && access.permissions.includes('order-downloads') && <TeamDayPdfDownloads onAccessLost={onAccessLost}/>}
       {error && <p role="alert" className="ta-error">{error}</p>}
       {loading ? <p role="status">Loading records…</p> : rows.length ? <div className="ta-table-wrap"><table><thead><tr>{definition.columns.map(([field, label]) => <th key={field}>{label}</th>)}{['orders', 'email-history'].includes(section) && <th>Details</th>}</tr></thead><tbody>{rows.map(row => <tr key={row.id || row.stat_date}>{definition.columns.map(column => <td key={column[0]}>{cell(row, column)}</td>)}{['orders', 'email-history'].includes(section) && <td><button onClick={() => openRow(row)} aria-label={'View ' + (section === 'orders' ? 'order ' + row.id : 'deliveries for ' + row.subject)}>View details</button></td>}</tr>)}</tbody></table></div> : !error && <p>No matching records.</p>}
