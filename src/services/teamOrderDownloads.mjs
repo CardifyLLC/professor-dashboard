@@ -15,3 +15,35 @@ export async function downloadTeamOrderPdfs({ orderId, parts, request, saveFile,
   }
   onProgress(parts+' PDF file'+(parts===1?'':'s')+' downloaded.');
 }
+
+export async function downloadTeamDayPdfs({ date, request, saveFile, fetchFile = fetch, signal, onProgress = () => {}, pause = () => new Promise(resolve => setTimeout(resolve, 300)) }) {
+  const check = () => { if (signal?.aborted) throw new DOMException('Download cancelled.', 'AbortError'); };
+  const orders = [], seen = new Set();
+  let offset = 0;
+  onProgress('Finding completed PDFs…');
+  do {
+    check();
+    const page = await request('/api/team-order-downloads?' + new URLSearchParams({ type: 'day', date, offset: String(offset) }));
+    check();
+    if (!Array.isArray(page.orders)) throw new Error('Could not load the PDFs for this date. Please retry.');
+    for (const order of page.orders) {
+      if (!order.orderId || !Number.isInteger(order.parts) || order.parts < 1) throw new Error('Invalid PDF listing. Please retry.');
+      if (!seen.has(order.orderId)) { seen.add(order.orderId); orders.push(order); }
+    }
+    if (page.nextOffset !== null && (!Number.isInteger(page.nextOffset) || page.nextOffset <= offset)) throw new Error('Could not load the next page of PDFs. Please retry.');
+    offset = page.nextOffset;
+  } while (offset !== null);
+  const total = orders.reduce((sum, order) => sum + order.parts, 0);
+  let filesDownloaded = 0;
+  for (const order of orders) {
+    await downloadTeamOrderPdfs({ ...order, request, fetchFile, signal,
+      onProgress: () => onProgress(`Downloading ${Math.min(filesDownloaded + 1, total)} of ${total} PDFs…`),
+      saveFile: async (blob, name) => {
+        check(); await saveFile(blob, name); filesDownloaded++;
+        if (filesDownloaded < total) await pause();
+      },
+    });
+  }
+  onProgress(total ? `Downloaded ${filesDownloaded} PDF file${filesDownloaded === 1 ? '' : 's'} for ${date} (Pacific).` : 'No completed PDFs found for this date.');
+  return { ordersDownloaded: orders.length, filesDownloaded };
+}
