@@ -48,4 +48,8 @@
 .ta-viewer dd { margin:0; overflow-wrap:anywhere; white-space:pre-line; }
 .ta-downloads { border-top:1px solid var(--border-color,#26344b); margin:20px 0 0; padding-top:20px; }
 .ta-downloads h3 { margin:0 0 10px; font-size:18px; }
+.ta-day-pdfs { margin:20px 0; padding:16px; border:1px solid var(--border-color,#26344b); border-radius:10px; }
+.ta-day-pdfs .ta-date-filter { width:190px; max-width:100%; }
+.ta-day-pdfs .ta-toolbar { align-items:center; }
+.ta-day-pdfs p:last-child { margin-bottom:0; }
 @media(max-width:700px) { .ta-permissions { grid-template-columns:1fr; } .ta-dialog,.ta-panel { padding:18px; } .ta-heading { align-items:flex-start; flex-wrap:wrap; } .ta-heading>svg { display:none; } .ta-viewer { padding:16px; } .ta-viewer dl { grid-template-columns:1fr; gap:6px; } .ta-viewer dd { margin-bottom:12px; } }

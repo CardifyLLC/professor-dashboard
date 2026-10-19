@@ -6,6 +6,7 @@ import { supabase } from '../services/supabaseClient';
 import { orderLink, restoreOrderAfterSignIn, validOrderId } from '../services/orderLinks.mjs';
 import './TeamAccess.css';
 import TeamOrderDownloads from './TeamOrderDownloads';
+import TeamDayPdfDownloads from './TeamDayPdfDownloads';
 import CardBatcherPro from './BatcherPRO';
 
 const date = value => value ? new Date(value).toLocaleString() : '—';
@@ -108,6 +109,7 @@ export default function ReadOnlyDashboard({ access, onAccessLost }) {
         {section === 'orders' && (dateFrom || dateTo) && <button type="button" onClick={() => { setDateFrom(''); setDateTo(''); }}>Clear dates</button>}
       </form>}
       {section === 'orders' && <p id="order-date-help" className="ta-small">Dates use your local time and include the full To date.</p>}
+      {section === 'orders' && access.permissions.includes('order-downloads') && <TeamDayPdfDownloads onAccessLost={onAccessLost}/>}
       {error && <p role="alert" className="ta-error">{error}</p>}
       {loading ? <p role="status">Loading records…</p> : rows.length ? <div className="ta-table-wrap"><table><thead><tr>{definition.columns.map(([field, label]) => <th key={field}>{label}</th>)}{['orders', 'email-history'].includes(section) && <th>Details</th>}</tr></thead><tbody>{rows.map(row => <tr key={row.id || row.stat_date}>{definition.columns.map(column => <td key={column[0]}>{cell(row, column)}</td>)}{['orders', 'email-history'].includes(section) && <td><button onClick={() => openRow(row)} aria-label={'View ' + (section === 'orders' ? 'order ' + row.id : 'deliveries for ' + row.subject)}>View details</button></td>}</tr>)}</tbody></table></div> : !error && <p>No matching records.</p>}
       <div className="ta-pagination"><button disabled={loading || !offset} onClick={() => load(Math.max(0, offset - 50))}>Previous</button><span>Page {offset / 50 + 1}</span><button disabled={loading || nextOffset === null} onClick={() => load(nextOffset)}>Next</button></div>
