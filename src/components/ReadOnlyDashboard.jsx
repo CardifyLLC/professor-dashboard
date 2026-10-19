@@ -21,6 +21,7 @@ export default function ReadOnlyDashboard({ access, onAccessLost }) {
   const [section, setSection] = useState(() => access.permissions.includes('orders') && new URL(window.location.href).searchParams.has('order') ? 'orders' : sections[0]?.id);
   const [rows, setRows] = useState([]), [offset, setOffset] = useState(0), [nextOffset, setNextOffset] = useState(null);
   const [search, setSearch] = useState(''), [appliedSearch, setAppliedSearch] = useState('');
+  const [dateFrom, setDateFrom] = useState(''), [dateTo, setDateTo] = useState('');
   const [loading, setLoading] = useState(true), [error, setError] = useState('');
   const [detail, setDetail] = useState(null), [detailError, setDetailError] = useState(''), [detailLoading, setDetailLoading] = useState(false);
   const modal = useRef(null), generation = useRef(0), detailGeneration = useRef(0);
@@ -29,13 +30,24 @@ export default function ReadOnlyDashboard({ access, onAccessLost }) {
   const load = useCallback(async (page = 0) => {
     const version = ++generation.current;
     if (!TEAM_SECTIONS.some(item => item.id === section)) { setLoading(false); return; }
-    setLoading(true); setError(''); setRows([]);
+    setLoading(true); setError(''); setRows([]); setOffset(page); setNextOffset(null);
     try {
-      const result = await dashboardAccessRequest('/api/dashboard-read?' + new URLSearchParams({ section, offset: String(page), q: appliedSearch }));
+      const params = new URLSearchParams({ section, offset: String(page), q: appliedSearch });
+      if (section === 'orders') {
+        if (dateFrom && dateTo && dateFrom > dateTo) throw new Error('From date cannot be after To date.');
+        // Match the normal dashboard's local calendar dates, including the whole end date.
+        if (dateFrom) params.set('from', new Date(dateFrom + 'T00:00:00').toISOString());
+        if (dateTo) {
+          const end = new Date(dateTo + 'T00:00:00');
+          end.setDate(end.getDate() + 1);
+          params.set('before', end.toISOString());
+        }
+      }
+      const result = await dashboardAccessRequest('/api/dashboard-read?' + params);
       if (version === generation.current) { setRows(result.rows); setOffset(page); setNextOffset(result.nextOffset); }
     } catch (err) { if (version === generation.current) { setError(err.message); if ([401, 403].includes(err.status)) onAccessLost(); } }
     finally { if (version === generation.current) setLoading(false); }
-  }, [section, appliedSearch, onAccessLost]);
+  }, [section, appliedSearch, dateFrom, dateTo, onAccessLost]);
   useEffect(() => { const counter = generation; load(0); return () => { counter.current++; }; }, [load]);
   const openDetail = useCallback(async (id, kind) => {
     const version = ++detailGeneration.current;
@@ -65,7 +77,7 @@ export default function ReadOnlyDashboard({ access, onAccessLost }) {
     detailGeneration.current++; modal.current?.close(); setDetail(null); setDetailError(''); setDetailLoading(false);
     window.history.replaceState(null, '', orderLink(null));
   };
-  const selectSection = id => { generation.current++; close(); setSection(id); setSearch(''); setAppliedSearch(''); setRows([]); };
+  const selectSection = id => { generation.current++; close(); setSection(id); setSearch(''); setAppliedSearch(''); setDateFrom(''); setDateTo(''); setRows([]); };
   const openRow = row => {
     if (section === 'orders') window.history.pushState(null, '', orderLink(row.id));
     openDetail(row.id, section);
@@ -86,7 +98,16 @@ export default function ReadOnlyDashboard({ access, onAccessLost }) {
     <div className="ta-info ta-panel"><ShieldCheck/><div><strong>Only the sections approved by your administrator are available.</strong><p>You can view and search records here. Contact an administrator to make changes or request another section.</p></div></div>
     <nav className="ta-navigation" aria-label="Allowed dashboard sections">{sections.map(item => <button key={item.id} aria-current={section === item.id ? 'page' : undefined} onClick={() => selectSection(item.id)}>{item.title}</button>)}</nav>
     {definition ? <section className="ta-panel" aria-label={definition?.title}><div className="ta-heading"><div><h2>{definition?.title}</h2><p>{definition?.description}</p></div><button disabled={loading} onClick={() => load(offset)}><RefreshCw size={16}/>Refresh</button></div>
-      {definition?.search && <form className="ta-search" onSubmit={event => { event.preventDefault(); if (appliedSearch === search.trim()) load(0); else setAppliedSearch(search.trim()); }}><label>{definition.search}<input type="search" maxLength={254} value={search} onChange={event => setSearch(event.target.value)}/></label><button type="submit" disabled={loading}>Search</button></form>}
+      {definition?.search && <form className="ta-search" onSubmit={event => { event.preventDefault(); if (appliedSearch === search.trim()) load(0); else setAppliedSearch(search.trim()); }}>
+        <label>{definition.search}<input type="search" maxLength={254} value={search} onChange={event => setSearch(event.target.value)}/></label>
+        {section === 'orders' && <>
+          <label className="ta-date-filter">From<input type="date" value={dateFrom} max={dateTo || undefined} onChange={event => setDateFrom(event.target.value)} aria-describedby="order-date-help"/></label>
+          <label className="ta-date-filter">To<input type="date" value={dateTo} min={dateFrom || undefined} onChange={event => setDateTo(event.target.value)} aria-describedby="order-date-help"/></label>
+        </>}
+        <button type="submit" disabled={loading}>Search</button>
+        {section === 'orders' && (dateFrom || dateTo) && <button type="button" onClick={() => { setDateFrom(''); setDateTo(''); }}>Clear dates</button>}
+      </form>}
+      {section === 'orders' && <p id="order-date-help" className="ta-small">Dates use your local time and include the full To date.</p>}
       {error && <p role="alert" className="ta-error">{error}</p>}
       {loading ? <p role="status">Loading records…</p> : rows.length ? <div className="ta-table-wrap"><table><thead><tr>{definition.columns.map(([field, label]) => <th key={field}>{label}</th>)}{['orders', 'email-history'].includes(section) && <th>Details</th>}</tr></thead><tbody>{rows.map(row => <tr key={row.id || row.stat_date}>{definition.columns.map(column => <td key={column[0]}>{cell(row, column)}</td>)}{['orders', 'email-history'].includes(section) && <td><button onClick={() => openRow(row)} aria-label={'View ' + (section === 'orders' ? 'order ' + row.id : 'deliveries for ' + row.subject)}>View details</button></td>}</tr>)}</tbody></table></div> : !error && <p>No matching records.</p>}
       <div className="ta-pagination"><button disabled={loading || !offset} onClick={() => load(Math.max(0, offset - 50))}>Previous</button><span>Page {offset / 50 + 1}</span><button disabled={loading || nextOffset === null} onClick={() => load(nextOffset)}>Next</button></div>
