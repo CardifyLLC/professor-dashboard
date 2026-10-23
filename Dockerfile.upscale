@@ -1,4 +1,4 @@
-FROM node:20-bookworm-slim
+FROM node:24.22.1-bookworm-slim
 
 ARG REAL_ESRGAN_RELEASE_URL=https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/realesrgan-ncnn-vulkan-20220424-ubuntu.zip
 
@@ -38,4 +38,4 @@ ENV REAL_ESRGAN_OUTPUT_FORMAT=png
 ENV REQUEST_TIMEOUT_MS=600000
 EXPOSE 8787
 
-CMD ["npm", "start"]
+CMD ["npm", "run", "upscale:server"]
