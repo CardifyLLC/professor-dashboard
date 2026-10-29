@@ -353,7 +353,7 @@ export const fetchOrders = async (page = 1, pageSize = 20, searchTerm = '', stat
 
     let query = ordersClient
         .from('orders')
-        .select('id, customer_name, customer_email, created_at, status, total_amount_cents, quantity, shipping_address, metadata, uploaded_xml_filename, uploaded_xml_content', { count: 'exact' });
+        .select('id, customer_name, customer_email, created_at, status, payment_status, total_amount_cents, quantity, shipping_address, metadata, uploaded_xml_filename, uploaded_xml_content, envelope_shipped_at, envelope_email_status', { count: 'exact' });
 
     if (searchTerm) {
         query = query.or(`customer_name.ilike.%${searchTerm}%,customer_email.ilike.%${searchTerm}%`);
