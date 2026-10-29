@@ -31,3 +31,7 @@ verify_jwt = false
 # Authenticated in the function via requireAdmin; no public send access.
 [functions.shipment-tracking]
 verify_jwt = false
+
+# Authenticated by requireAdmin and rechecked by the atomic database claim.
+[functions.ship-envelope]
+verify_jwt = false
