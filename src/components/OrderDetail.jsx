@@ -1,4 +1,5 @@
 import OrderImage from './OrderImage';
+import EnvelopeShipmentButton from './EnvelopeShipmentButton';
 import OrderLink from './OrderLink';
 import PartnerOrderPanel from './PartnerOrderPanel';
 import { isPartnerOrder } from '../services/partnerArtwork.mjs';
@@ -699,6 +700,7 @@ const OrderDetail = ({ order, onClose, onOrderUpdated }) => {
                                         <span className={`status-badge status-${normalizedStatus}`}>
                                             {order.status}
                                         </span>
+                                        <EnvelopeShipmentButton key={order.id} order={order} onUpdated={onOrderUpdated} />
                                         <button
                                             onClick={markOrderCompleted}
                                             type="button"

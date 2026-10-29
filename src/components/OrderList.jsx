@@ -1,4 +1,5 @@
 import { isPartnerOrder } from '../services/partnerArtwork.mjs';
+import EnvelopeShipmentButton from './EnvelopeShipmentButton';
 import React, { useState, useEffect } from 'react';
 import { Download, TriangleAlert } from 'lucide-react';
 import { saveAs } from 'file-saver';
@@ -446,6 +447,7 @@ const OrderList = ({ orders, onSelectOrder, page, setPage, totalCount, pageSize,
                             </td>
                             <td onClick={e => e.stopPropagation()}>
                                 <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: '6px' }}>
+                                <EnvelopeShipmentButton key={order.id} order={order} onUpdated={() => onOrdersUpdated?.()} />
                                 <button
                                     type="button"
                                     onClick={(event) => handleGrantCashReward(event, order)}
