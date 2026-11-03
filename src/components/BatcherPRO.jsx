@@ -51,7 +51,7 @@ const INITIAL_CONFIG = {
   // Layout Defaults (Locked)
   marginTop: 15.5,
   marginLeft: 9.7,
-  gapHorizontal: 2.6,
+  gapHorizontal: 2.45,
   gapVertical: 6.4,
 
   // Card Size (Locked)
@@ -76,6 +76,45 @@ const INITIAL_CONFIG = {
   targetDPI: LOCKED_TARGET_DPI,    // Locked to 1200
   printCutLines: true
 };
+
+function loadBatcherDefaults(stock, fallback) {
+  try {
+    const saved = JSON.parse(localStorage.getItem('cardBatcherDefaults:' + stock));
+    if (!saved || typeof saved !== 'object' || Array.isArray(saved)) return fallback;
+    const result = { ...fallback };
+    for (const key of Object.keys(fallback)) {
+      const value = saved[key];
+      if ((typeof fallback[key] === 'number' && (typeof value === 'number' || typeof value === 'string') && String(value).trim() !== '' && Number.isFinite(Number(value))) ||
+          (typeof fallback[key] !== 'number' && typeof value === typeof fallback[key])) {
+        result[key] = value;
+      }
+    }
+    return result;
+  } catch {
+    return fallback;
+  }
+}
+
+function SaveDefaultsButton() {
+  const { saveSettingsAsDefault, config } = useContext(BatcherPROContext);
+  const [feedback, setFeedback] = useState(null);
+  const save = () => {
+    try {
+      saveSettingsAsDefault();
+      setFeedback({ config, message: 'Default settings saved for this browser.' });
+    } catch {
+      setFeedback({ config, message: 'Could not save settings. Browser storage may be unavailable.' });
+    }
+  };
+  return (
+    <div className="mb-4">
+      <button type="button" onClick={save} className="flex items-center gap-2 px-3 py-2 rounded-lg bg-blue-600 text-white text-xs font-semibold hover:bg-blue-700">
+        <Save className="w-4 h-4" /> Save settings as default
+      </button>
+      {feedback?.config === config && <p role="status" className="text-xs mt-2">{feedback.message}</p>}
+    </div>
+  );
+}
 
 const CardBatcherPro = ({ showSidebar = true, onBackToDashboard, teamAccess = false, onAccessLost }) => {
   const mounted = useRef(true);
@@ -144,8 +183,8 @@ const CardBatcherPro = ({ showSidebar = true, onBackToDashboard, teamAccess = fa
   // Customer navigation state
   const [currentCustomerIndex, setCurrentCustomerIndex] = useState(0);
 
-  // Config State - Always starts with INITIAL_CONFIG
-  const [config, setConfig] = useState(INITIAL_CONFIG);
+  // Restore explicitly saved browser defaults.
+  const [config, setConfig] = useState(() => loadBatcherDefaults('standard', INITIAL_CONFIG));
 
   // --- Effects ---
 
@@ -1719,7 +1758,12 @@ const CardBatcherPro = ({ showSidebar = true, onBackToDashboard, teamAccess = fa
   const remainingLabel = formatDuration(estimatedRemainingSeconds);
 
   // Provide context value (after all handlers are defined)
+  const saveSettingsAsDefault = () => {
+    localStorage.setItem('cardBatcherDefaults:' + 'standard', JSON.stringify(config));
+  };
+
   const contextValue = {
+    saveSettingsAsDefault,
     config,
     setConfig,
     frontImages,
@@ -2065,6 +2109,7 @@ const CardBatcherPro = ({ showSidebar = true, onBackToDashboard, teamAccess = fa
                         <h2 className="font-bold flex items-center gap-2 text-slate-700 mb-6">
                           <Settings className="w-4 h-4" /> Layout Settings
                         </h2>
+        <SaveDefaultsButton />
 
                         <div className="space-y-6">
 
@@ -3312,6 +3357,7 @@ const CardBatcherPro = ({ showSidebar = true, onBackToDashboard, teamAccess = fa
                   <h2 className="font-bold flex items-center gap-2 text-slate-700 mb-4">
                     <Settings className="w-4 h-4" /> Layout Settings
                   </h2>
+        <SaveDefaultsButton />
 
                   <div className="space-y-4">
                     {/* Registration Bar */}
@@ -4264,6 +4310,7 @@ export const BatcherPROSidebar = () => {
         <h2 className="font-bold flex items-center gap-2 mb-6" style={{ color: 'var(--text-primary)' }}>
           <Settings className="w-4 h-4" /> Layout Settings
         </h2>
+        <SaveDefaultsButton />
 
         <div className="space-y-8">
           {/* Registration Bar */}
