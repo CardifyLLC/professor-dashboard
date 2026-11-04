@@ -1,3 +1,5 @@
+import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
+import { resolve, join } from 'node:path';
 import { isPartnerOrder } from '../src/services/partnerArtwork.mjs';
 import { createClient } from '@supabase/supabase-js';
 import { degrees, PDFDocument, rgb, StandardFonts } from 'pdf-lib';
@@ -23,11 +25,13 @@ const IMAGE_QUALITY = 50;
 class MissingImageCandidateError extends Error {}
 class MissingOrderImageError extends Error {}
 
-if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
+const mode = process.argv[2];
+if (mode && !['--sample', '--stage-order'].includes(mode)) throw new Error('Unknown worker option');
+if (mode !== '--sample' && (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY)) {
   throw new Error('SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are required.');
 }
 
-const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
+const supabase = mode === '--sample' ? null : createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
   auth: { persistSession: false, autoRefreshToken: false },
 });
 
@@ -38,7 +42,7 @@ const CARD_WIDTH = mmToPt(67);
 const CARD_HEIGHT = mmToPt(92);
 const MARGIN_TOP = mmToPt(15.5);
 const MARGIN_LEFT = mmToPt(9.7);
-const GAP_X = mmToPt(2.6);
+const GAP_X = mmToPt(2.45);
 const GAP_Y = mmToPt(6.4);
 const REG_MARK_X = mmToPt(7);
 const REG_MARK_Y = mmToPt(60.4);
@@ -422,9 +426,37 @@ const dispatchContinuation = async () => {
   console.log('Queued the next GitHub Actions batch.');
 };
 
-await backfillMissingJobs();
-const jobs = await findJobs();
-console.log(`Found ${jobs.length} PDF job(s) for this run.`);
-for (const job of jobs) await processJob(job);
-const remainingJobs = await findJobs();
-if (remainingJobs.length) await dispatchContinuation();
+if (mode === '--sample') {
+  const image = await sharp({ create: { width: 16, height: 16, channels: 3, background: '#5a7890' } }).png().toBuffer();
+  const urls = ['data:image/png;base64,' + image.toString('base64')];
+  const cards = Array.from({ length: CARDS_PER_SHEET }, () => ({ front: urls, back: urls }));
+  await writeFile(process.argv[3], await generatePdf({ customer_name: 'Layout sample' }, cards, async () => {}), { flag: 'wx' });
+} else if (mode === '--stage-order') {
+  const id = process.argv[3];
+  if (!/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(id || '')) throw new Error('Supply one order UUID');
+  const { data: job, error: jobError } = await supabase.from('order_pdf_generations').select('status').eq('order_id', id).single();
+  if (jobError) throw jobError;
+  if (job.status !== 'completed') throw new Error('Only completed orders can be staged');
+  const { data: order, error } = await supabase.from('orders').select('*').eq('id', id).single();
+  if (error) throw error;
+  if (isPartnerOrder(order)) throw new Error('Partner orders use a separate print workflow');
+  const cards = cardsFromOrder(order);
+  if (!cards.length) throw new Error('No printable cards');
+  const root = resolve('staged-order-pdfs');
+  await mkdir(root, { recursive: true });
+  const directory = await mkdtemp(join(root, id + '-'));
+  const count = Math.ceil(cards.length / MAX_CARDS_PER_FILE);
+  for (let part = 0; part < count; part++) {
+    const bytes = await generatePdf(order, cards.slice(part * MAX_CARDS_PER_FILE, (part + 1) * MAX_CARDS_PER_FILE), async () => {});
+    const name = count === 1 ? 'print-sheet.pdf' : 'order-' + id + '-part-' + (part + 1) + '-of-' + count + '.pdf';
+    await writeFile(join(directory, name), bytes, { flag: 'wx' });
+  }
+  console.log('All parts staged locally for review:', directory);
+} else {
+  await backfillMissingJobs();
+  const jobs = await findJobs();
+  console.log(`Found ${jobs.length} PDF job(s) for this run.`);
+  for (const job of jobs) await processJob(job);
+  const remainingJobs = await findJobs();
+  if (remainingJobs.length) await dispatchContinuation();
+}
