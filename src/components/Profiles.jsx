@@ -61,6 +61,21 @@ const ORDER_STATUS_COLORS = {
   refunded: '#6b7280',
 };
 
+async function fetchAllProfiles(columns) {
+  const rows = [];
+  const pageSize = 1000;
+  for (let from = 0; ; from += pageSize) {
+    const { data, error } = await supabaseAdmin.from('profiles')
+      .select(columns)
+      .order('created_at', { ascending: false })
+      .order('id', { ascending: false })
+      .range(from, from + pageSize - 1);
+    if (error) throw error;
+    rows.push(...data);
+    if (data.length < pageSize) return rows;
+  }
+}
+
 const Profiles = () => {
   const [profiles, setProfiles] = useState([]);
   const [orders, setOrders] = useState([]);
@@ -97,20 +112,7 @@ const Profiles = () => {
     setError(null);
 
     try {
-      const pageSize = 1000;
-      const allProfiles = [];
-
-      for (let from = 0; ; from += pageSize) {
-        const { data, error: exportError } = await supabaseAdmin
-          .from('profiles')
-          .select('email')
-          .order('created_at', { ascending: false })
-          .range(from, from + pageSize - 1);
-
-        if (exportError) throw exportError;
-        allProfiles.push(...(data || []));
-        if (!data || data.length < pageSize) break;
-      }
+      const allProfiles = await fetchAllProfiles('email');
 
       const emails = allProfiles
         .map((profile) => profile.email?.trim())
@@ -217,15 +219,14 @@ const Profiles = () => {
       setLoading(true);
       setError(null);
       try {
-        const [profilesRes, ordersRes, walletsRes] = await Promise.all([
-          supabaseAdmin.from('profiles').select('*').order('created_at', { ascending: false }),
+        const [allProfiles, ordersRes, walletsRes] = await Promise.all([
+          fetchAllProfiles('*'),
           supabaseAdmin.from('orders').select('id, user_id, customer_email, customer_name, status, total_amount_cents, created_at, quantity').order('created_at', { ascending: false }),
           supabaseAdmin.from('wallet_accounts').select('user_id,balance,reserved_balance').eq('account_code', 'prints'),
         ]);
-        if (profilesRes.error) throw profilesRes.error;
         if (ordersRes.error) throw ordersRes.error;
         if (walletsRes.error) throw walletsRes.error;
-        setProfiles(profilesRes.data || []);
+        setProfiles(allProfiles);
         setOrders(ordersRes.data || []);
         setWallets(walletsRes.data || []);
         await loadNewUserEligibility();
