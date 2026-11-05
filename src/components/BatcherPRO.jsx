@@ -323,9 +323,6 @@ const CardBatcherPro = ({ showSidebar = true, onBackToDashboard, teamAccess = fa
 
   const { width: PAGE_WIDTH_MM, height: PAGE_HEIGHT_MM } = getActiveSheetDims();
   const cardsPerPage = config.gridCols * config.gridRows;
-  const CUSTOMER_HEADER_HEIGHT_MM = 7;
-  const CUSTOMER_HEADER_GAP_MM = 3;
-  const CUSTOMER_HEADER_OFFSET_MM = CUSTOMER_HEADER_HEIGHT_MM + CUSTOMER_HEADER_GAP_MM;
 
   // Build pages that pack multiple orders onto the same sheet when there are empty slots.
   // Each page is { customerName: string|null, entries: Array<{ card, index, customerName }> } where index is in `frontImages`.
@@ -1813,7 +1810,8 @@ const CardBatcherPro = ({ showSidebar = true, onBackToDashboard, teamAccess = fa
     // The back preview mirrors X when duplex rotation is disabled.
     const horizontal = previewSide === 'back' && !config.flipBackPage ? -dx : dx;
     setSelectedSlot({ scope: settingsScope, index });
-    setConfig(previous => nudgeSlot(previous, index, horizontal, dy));
+    const vertical = previewSide === 'back' && config.flipBackPage ? -dy : dy;
+    setConfig(previous => nudgeSlot(previous, index, horizontal, vertical));
   };
 
   const saveSettingsAsDefault = () => {
@@ -2900,7 +2898,7 @@ const CardBatcherPro = ({ showSidebar = true, onBackToDashboard, teamAccess = fa
                                   if (config.flipBackPage) {
                                     // Flip Logic
                                     x = mmToPx(getConfigNum('regMarkX')) + shiftX;
-                                    y = mmToPx(getConfigNum('regMarkY')) + shiftY;
+                                    y = mmToPx(PAGE_HEIGHT_MM - getConfigNum('regMarkY') - getConfigNum('regMarkHeight')) + shiftY;
                                   } else {
                                     // Standard Mirror
                                     x = mmToPx(PAGE_WIDTH_MM) - x - w + shiftX;
@@ -2937,7 +2935,7 @@ const CardBatcherPro = ({ showSidebar = true, onBackToDashboard, teamAccess = fa
                             const row = Math.floor(i / getConfigNum('gridCols'));
 
                             let mmX = getConfigNum('marginLeft') + (col * (getConfigNum('cardWidth') + getConfigNum('gapHorizontal')));
-                            let mmY = (getConfigNum('marginTop') + CUSTOMER_HEADER_OFFSET_MM) + (row * (getConfigNum('cardHeight') + getConfigNum('gapVertical')));
+                            let mmY = getConfigNum('marginTop') + (row * (getConfigNum('cardHeight') + getConfigNum('gapVertical')));
                             const offset = getSlotOffset(config, i);
                             mmX += offset.x;
                             mmY += offset.y;
@@ -2946,7 +2944,7 @@ const CardBatcherPro = ({ showSidebar = true, onBackToDashboard, teamAccess = fa
                               if (config.flipBackPage) {
                                 // Flip Mode
                                 mmX += getConfigNum('backShiftX');
-                                mmY += getConfigNum('backShiftY');
+                                mmY = PAGE_HEIGHT_MM - mmY - getConfigNum('cardHeight') + getConfigNum('backShiftY');
                               } else {
                                 // Standard Mirror
                                 mmX = PAGE_WIDTH_MM - mmX - getConfigNum('cardWidth');
@@ -3027,6 +3025,7 @@ const CardBatcherPro = ({ showSidebar = true, onBackToDashboard, teamAccess = fa
                                   {image ? (
                                     <OrderImage
                                       src={image}
+                                      style={{ transform: previewSide === 'back' && config.flipBackPage ? 'rotate(180deg)' : undefined }}
                                       onLoad={(e) => logImgInfo('front (preview-grid)', e.currentTarget)}
                                       className="w-full h-full object-cover"
                                       alt=""
@@ -4100,7 +4099,7 @@ const CardBatcherPro = ({ showSidebar = true, onBackToDashboard, teamAccess = fa
                           if (previewSide === 'back') {
                             if (config.flipBackPage) {
                               x = mmToPx(getConfigNum('regMarkX')) + shiftX;
-                              y = mmToPx(getConfigNum('regMarkY')) + shiftY;
+                              y = mmToPx(PAGE_HEIGHT_MM - getConfigNum('regMarkY') - getConfigNum('regMarkHeight')) + shiftY;
                             } else {
                               x = mmToPx(PAGE_WIDTH_MM) - x - w + shiftX;
                               y = y + shiftY;
@@ -4135,7 +4134,7 @@ const CardBatcherPro = ({ showSidebar = true, onBackToDashboard, teamAccess = fa
                       const row = Math.floor(i / getConfigNum('gridCols'));
 
                       let mmX = getConfigNum('marginLeft') + (col * (getConfigNum('cardWidth') + getConfigNum('gapHorizontal')));
-                      let mmY = (getConfigNum('marginTop') + CUSTOMER_HEADER_OFFSET_MM) + (row * (getConfigNum('cardHeight') + getConfigNum('gapVertical')));
+                      let mmY = getConfigNum('marginTop') + (row * (getConfigNum('cardHeight') + getConfigNum('gapVertical')));
                       const offset = getSlotOffset(config, i);
                       mmX += offset.x;
                       mmY += offset.y;
@@ -4143,7 +4142,7 @@ const CardBatcherPro = ({ showSidebar = true, onBackToDashboard, teamAccess = fa
                       if (previewSide === 'back') {
                         if (config.flipBackPage) {
                           mmX += getConfigNum('backShiftX');
-                          mmY += getConfigNum('backShiftY');
+                          mmY = PAGE_HEIGHT_MM - mmY - getConfigNum('cardHeight') + getConfigNum('backShiftY');
                         } else {
                           mmX = PAGE_WIDTH_MM - mmX - getConfigNum('cardWidth');
                           mmX += getConfigNum('backShiftX');
@@ -4222,7 +4221,8 @@ const CardBatcherPro = ({ showSidebar = true, onBackToDashboard, teamAccess = fa
                             {image ? (
                               <OrderImage
                                 src={image}
-                                onLoad={(e) => logImgInfo('front (main-grid)', e.currentTarget)}
+                                style={{ transform: previewSide === 'back' && config.flipBackPage ? 'rotate(180deg)' : undefined }}
+                                      onLoad={(e) => logImgInfo('front (main-grid)', e.currentTarget)}
                                 onError={(e) => {
                                   console.error('Image failed to load:', image);
                                   e.target.style.display = 'none';
