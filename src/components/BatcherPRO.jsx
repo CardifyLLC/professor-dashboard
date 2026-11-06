@@ -1,3 +1,4 @@
+import { getPacificDate } from '../services/orderDates.mjs';
 import OrderImage from './OrderImage';
 import { dashboardAccessRequest } from '../services/dashboardAccess';
 import { fetchTeamBatcherOrders, isTeamArtwork, resolveTeamArtwork, teamBatcherOrder } from '../services/teamBatcher';
@@ -966,7 +967,7 @@ const CardBatcherPro = ({ showSidebar = true, onBackToDashboard, teamAccess = fa
       paidOrders.forEach(order => {
         if (order.created_at) {
           // Format date as YYYY-MM-DD
-          const dateStr = new Date(order.created_at).toISOString().split('T')[0];
+          const dateStr = getPacificDate(order.created_at);
           uniqueDates.add(dateStr);
         }
       });
@@ -1008,7 +1009,7 @@ const CardBatcherPro = ({ showSidebar = true, onBackToDashboard, teamAccess = fa
         const customerOrders = ordersByCustomer[customerName];
 
         customerOrders.forEach(order => {
-          const orderDate = order.created_at ? new Date(order.created_at).toISOString().split('T')[0] : null;
+          const orderDate = order.created_at ? getPacificDate(order.created_at) : null;
 
           const cardData = typeof order.card_data === 'string'
             ? JSON.parse(order.card_data)
