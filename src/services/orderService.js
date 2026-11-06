@@ -1,3 +1,5 @@
+import { pacificMidnightToUtc, nextCalendarDate } from './orderDates.mjs';
+export { getCurrentPacificDate } from './orderDates.mjs';
 import { isPartnerImage, isPartnerOrder } from './partnerArtwork.mjs';
 import { loadPartnerArtwork, partnerOrderRequest } from './partnerOrders';
 import { supabase, supabaseAdmin, getAdminAuthHeaders } from './supabaseClient';
@@ -10,45 +12,6 @@ export const completeOrdersOlderThanTwoWeeks = async () => completeOlderOrders(
     import.meta.env.VITE_SUPABASE_URL + '/functions/v1/complete-older-orders',
     await getAdminAuthHeaders(),
 );
-const ORDER_TIME_ZONE = 'America/Los_Angeles';
-
-const pacificDateTimeFormatter = new Intl.DateTimeFormat('en-US', {
-    timeZone: ORDER_TIME_ZONE,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-    hourCycle: 'h23',
-});
-
-const getDateTimeParts = (value) => Object.fromEntries(
-    pacificDateTimeFormatter.formatToParts(value)
-        .filter(part => part.type !== 'literal')
-        .map(part => [part.type, Number(part.value)])
-);
-
-const pacificMidnightToUtc = (date) => {
-    const [year, month, day] = date.split('-').map(Number);
-    const targetAsUtc = Date.UTC(year, month - 1, day);
-    const rendered = getDateTimeParts(new Date(targetAsUtc));
-    const renderedAsUtc = Date.UTC(
-        rendered.year,
-        rendered.month - 1,
-        rendered.day,
-        rendered.hour,
-        rendered.minute,
-        rendered.second
-    );
-    return new Date(targetAsUtc - (renderedAsUtc - targetAsUtc));
-};
-
-export const getCurrentPacificDate = () => {
-    const { year, month, day } = getDateTimeParts(new Date());
-    return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-};
-
 export const awardCashPurchaseReward = async (orderId) => {
     const headers = await getAdminAuthHeaders();
     const response = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/award-cash-reward`, {
@@ -328,10 +291,10 @@ export const fetchOrdersForExport = async (searchTerm = '', statusFilter = 'all'
         query = query.eq('status', statusFilter);
     }
     if (dateFrom) {
-        query = query.gte('created_at', new Date(dateFrom + 'T00:00:00').toISOString());
+        query = query.gte('created_at', pacificMidnightToUtc(dateFrom).toISOString());
     }
     if (dateTo) {
-        query = query.lte('created_at', new Date(dateTo + 'T23:59:59.999').toISOString());
+        query = query.lt('created_at', pacificMidnightToUtc(nextCalendarDate(dateTo)).toISOString());
     }
 
     const { data, error } = await query;
@@ -364,13 +327,13 @@ export const fetchOrders = async (page = 1, pageSize = 20, searchTerm = '', stat
     }
 
     if (dateFrom) {
-        // T00:00:00 without Z = local midnight, avoids UTC shift
-        query = query.gte('created_at', new Date(dateFrom + 'T00:00:00').toISOString());
+        // Match the Pacific date displayed in Order History and BatcherPRO.
+        query = query.gte('created_at', pacificMidnightToUtc(dateFrom).toISOString());
     }
 
     if (dateTo) {
-        // T23:59:59.999 without Z = local end-of-day, includes the full selected date
-        query = query.lte('created_at', new Date(dateTo + 'T23:59:59.999').toISOString());
+        // Exclusive next Pacific midnight also handles 23/25-hour DST days.
+        query = query.lt('created_at', pacificMidnightToUtc(nextCalendarDate(dateTo)).toISOString());
     }
 
     const { data, count, error } = await query
