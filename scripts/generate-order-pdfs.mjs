@@ -5,6 +5,7 @@ import { createClient } from '@supabase/supabase-js';
 import { degrees, PDFDocument, rgb, StandardFonts } from 'pdf-lib';
 import sharp from 'sharp';
 import { downloadOrderImage } from './download-order-image.mjs';
+import { dailyLayoutForOrder, dailySlotPosition } from './regular-order-layout.mjs';
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -40,15 +41,11 @@ const PAGE_WIDTH = mmToPt(457.2);
 const PAGE_HEIGHT = mmToPt(304.8);
 const CARD_WIDTH = mmToPt(67);
 const CARD_HEIGHT = mmToPt(92);
-const MARGIN_TOP = mmToPt(15.5);
 const MARGIN_LEFT = mmToPt(9.7);
-const GAP_X = mmToPt(2.45);
-const GAP_Y = mmToPt(6.4);
 const REG_MARK_X = mmToPt(7);
 const REG_MARK_Y = mmToPt(60.4);
 const REG_MARK_WIDTH = mmToPt(3.3);
 const REG_MARK_HEIGHT = mmToPt(60);
-const COLS = 6;
 const CARDS_PER_SHEET = 18;
 const CUSTOMER_NAME_FONT_SIZE = 12;
 // Supabase accepts at most 500 MB per object. A real 20-sheet/40-page part
@@ -209,6 +206,11 @@ const drawRegistrationBar = (page, isBackPage) => {
 };
 
 const generatePdf = async (order, cards, onProgress) => {
+  const layout = dailyLayoutForOrder(order);
+  const position = index => {
+    const { x, top } = dailySlotPosition(index, layout);
+    return { x: mmToPt(x), y: PAGE_HEIGHT - mmToPt(top) - CARD_HEIGHT };
+  };
   const pdf = await PDFDocument.create();
   const font = await pdf.embedFont(StandardFonts.Helvetica);
   const imageCache = new Map();
@@ -232,10 +234,7 @@ const generatePdf = async (order, cards, onProgress) => {
       color: rgb(0, 0, 0),
     });
     for (let index = 0; index < sheet.length; index += 1) {
-      const col = index % COLS;
-      const row = Math.floor(index / COLS);
-      const x = MARGIN_LEFT + col * (CARD_WIDTH + GAP_X);
-      const y = PAGE_HEIGHT - MARGIN_TOP - CARD_HEIGHT - row * (CARD_HEIGHT + GAP_Y);
+      const { x, y } = position(index);
       frontPage.drawImage(await embed(sheet[index].front), { x, y, width: CARD_WIDTH, height: CARD_HEIGHT });
       frontPage.drawRectangle({ x, y, width: CARD_WIDTH, height: CARD_HEIGHT, borderWidth: 0.1, borderColor: rgb(.78, .78, .78) });
       processed += 1;
@@ -247,10 +246,9 @@ const generatePdf = async (order, cards, onProgress) => {
       for (let index = 0; index < sheet.length; index += 1) {
         const card = sheet[index];
         if (!card.back.length) continue;
-        const col = index % COLS;
-        const row = Math.floor(index / COLS);
-        const x = MARGIN_LEFT + col * (CARD_WIDTH + GAP_X);
-        const frontY = PAGE_HEIGHT - MARGIN_TOP - CARD_HEIGHT - row * (CARD_HEIGHT + GAP_Y);
+        // Reflect the calibrated front position vertically for short-edge
+        // duplex. Do not mirror/re-index offsets on the back or negate X.
+        const { x, y: frontY } = position(index);
         backPage.drawImage(await embed(card.back), {
           x: x + CARD_WIDTH, y: PAGE_HEIGHT - frontY, width: CARD_WIDTH, height: CARD_HEIGHT, rotate: degrees(180),
         });
@@ -427,10 +425,21 @@ const dispatchContinuation = async () => {
 };
 
 if (mode === '--sample') {
-  const image = await sharp({ create: { width: 16, height: 16, channels: 3, background: '#5a7890' } }).png().toBuffer();
-  const urls = ['data:image/png;base64,' + image.toString('base64')];
-  const cards = Array.from({ length: CARDS_PER_SHEET }, () => ({ front: urls, back: urls }));
-  await writeFile(process.argv[3], await generatePdf({ customer_name: 'Layout sample' }, cards, async () => {}), { flag: 'wx' });
+  const count = Number(process.argv[4] || 52);
+  if (!Number.isInteger(count) || count < 1 || count > 324) throw new Error('Sample count must be 1-324');
+  const finish = process.argv[5] || 'standard';
+  if (!['standard', 'silver'].includes(finish)) throw new Error('Sample finish must be standard or silver');
+  const images = await Promise.all(Array.from({ length: 18 }, async (_, slot) => {
+    const image = async side => {
+      const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="670" height="920"><rect width="670" height="920" fill="white"/><rect x="5" y="5" width="660" height="910" fill="none" stroke="black" stroke-width="2"/><path d="M235 460h200M335 360v200M235 30h200M335 0v80M235 890h200M335 840v80M0 360v200M0 460h80M670 360v200M590 460h80" stroke="black" stroke-width="2"/><g font-family="sans-serif" text-anchor="middle" fill="black"><text x="335" y="135" font-size="35">TOP - ${side}</text><text x="335" y="260" font-size="40">SLOT ${String(slot + 1).padStart(2, '0')}</text><text x="335" y="620" font-size="26">R${Math.floor(slot / 6) + 1} C${slot % 6 + 1}</text><text x="335" y="705" font-size="24">67 x 92 mm</text><text x="335" y="760" font-size="22">PROVISIONAL CALIBRATION</text><text x="335" y="800" font-size="20">NOT A CUSTOMER ORDER</text></g></svg>`;
+      const bytes = await sharp(Buffer.from(svg)).png().toBuffer();
+      return ['data:image/png;base64,' + bytes.toString('base64')];
+    };
+    return { front: await image('FRONT'), back: await image('BACK') };
+  }));
+  const cards = Array.from({ length: count }, (_, index) => images[index % 18]);
+  const order = { customer_name: `PROVISIONAL ${finish.toUpperCase()} - PRINT AT 100% / SHORT-EDGE DUPLEX`, card_data: [{ finish }] };
+  await writeFile(process.argv[3], await generatePdf(order, cards, async () => {}), { flag: 'wx' });
 } else if (mode === '--stage-order') {
   const id = process.argv[3];
   if (!/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(id || '')) throw new Error('Supply one order UUID');
