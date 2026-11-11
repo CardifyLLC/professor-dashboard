@@ -3,8 +3,10 @@
   "storefront_url": "https://www.tcgplaytest.com/",
   "supabase_project_id": "dunoesykjvdnpeavojsi",
   "report_recipients": ["superiorvideo@gmail.com", "placeparks@gmail.com"],
-  "approver_email": "superiorvideo@gmail.com",
-  "approver_user_id": "b80fb162-04d0-47c4-928f-a03da244730e",
+  "approvers": [
+    { "email": "superiorvideo@gmail.com", "user_id": "b80fb162-04d0-47c4-928f-a03da244730e" },
+    { "email": "nick@cardify.club", "user_id": "f926669e-77bf-40cb-a054-3260f07b4dc8" }
+  ],
   "timezone": "UTC",
   "existing_report_path": "/api/bots/prints",
   "delivery_schedule_verified": false,
