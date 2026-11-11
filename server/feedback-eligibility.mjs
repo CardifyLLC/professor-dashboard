@@ -1,6 +1,5 @@
 import { readAll } from './report-sources.mjs';
 import { validateCampaign } from '../shared/feedback-campaign.mjs';
-import { deliveryBlockers } from './feedback-targeted.mjs';
 
 export function evaluateEligibility({order:o,campaign:c,profiles,subscribers,orders,invitations,now=Date.now()}) {
   const reasons=[];
@@ -19,11 +18,20 @@ export function evaluateEligibility({order:o,campaign:c,profiles,subscribers,ord
   if(!['all_consented_customers','first_order_customers','repeat_customers'].includes(c.audience)||(c.audience==='first_order_customers'&&prior)||(c.audience==='repeat_customers'&&!prior))reasons.push('Outside campaign audience');
   const own=invitations.filter(i=>i.user_id===o.user_id);
   const campaignInvites=invitations.filter(i=>i.campaign_id===c.id);
-  if(campaignInvites.some(i=>i.order_id===o.id))reasons.push('Already invited for this campaign');
-  if(own.some(i=>Date.parse(i.created_at)>now-Number(c.invitation_frequency_days)*86400000))reasons.push('Invitation frequency limit');
-  if(campaignInvites.filter(i=>i.user_id===o.user_id).length>=c.reward_limit_per_customer)reasons.push('Customer invitation limit');
-  if(campaignInvites.length>=c.max_invitations||(campaignInvites.length+1)*5>c.budget_prints||(campaignInvites.length+1)*c.email_unit_cost_minor>c.budget_email_minor||(campaignInvites.reduce((n,i)=>n+i.send_attempts,0)+1)*c.email_unit_cost_minor>c.budget_email_minor)reasons.push('Campaign budget or invitation limit');
-  return {order_id:o.id,email,invitation_status:campaignInvites.find(i=>i.order_id===o.id)?.status||null,account_linked:Boolean(o.user_id&&profile),payment_status:o.payment_status,order_status:o.status,eligible:reasons.length===0,reasons};
+  const existing=campaignInvites.find(i=>i.order_id===o.id);
+  const pending=existing?.status==='pending';
+  if(existing&&!pending)reasons.push('Already invited for this campaign');
+  if(pending){
+    if(existing.user_id!==o.user_id)reasons.push('Invitation account changed');
+    if(!Number.isFinite(Date.parse(existing.expires_at))||Date.parse(existing.expires_at)<=now)reasons.push('Invitation expired');
+  }else{
+    if(own.some(i=>Date.parse(i.created_at)>now-Number(c.invitation_frequency_days)*86400000))reasons.push('Invitation frequency limit');
+    if(campaignInvites.filter(i=>i.user_id===o.user_id).length>=c.reward_limit_per_customer)reasons.push('Customer invitation limit');
+    if(campaignInvites.length>=c.max_invitations||(campaignInvites.length+1)*5>c.budget_prints||(campaignInvites.length+1)*c.email_unit_cost_minor>c.budget_email_minor)reasons.push('Campaign budget or invitation limit');
+  }
+  // A pending retry reuses its reserved reward; only an additional email costs budget.
+  if((campaignInvites.reduce((n,i)=>n+i.send_attempts,0)+1)*c.email_unit_cost_minor>c.budget_email_minor&&!reasons.includes('Campaign budget or invitation limit'))reasons.push('Campaign budget or invitation limit');
+  return {order_id:o.id,email,invitation_status:existing?.status||null,retry_pending:pending&&existing.send_attempts>0,account_linked:Boolean(o.user_id&&profile),payment_status:o.payment_status,order_status:o.status,eligible:reasons.length===0,reasons};
 }
 
 export async function feedbackEligibility(db,campaignId,env){
@@ -33,12 +41,12 @@ export async function feedbackEligibility(db,campaignId,env){
   const [orders,profiles,subscribers,invitations]=await Promise.all([
     readAll(db,'orders'),readAll(db,'profiles','id,email'),
     readAll(db,'marketing_subscribers','email,status,consented_at,consent_text',q=>q,'email'),
-    readAll(db,'feedback_invitations','id,campaign_id,order_id,user_id,status,created_at,send_attempts'),
+    readAll(db,'feedback_invitations','id,campaign_id,order_id,user_id,status,created_at,send_attempts,expires_at'),
   ]);
   const blockers=[];
   try{validateCampaign(campaign);}catch{blockers.push('Campaign configuration incomplete');}
   if(!campaign.enabled||campaign.paused)blockers.push('Campaign disabled or paused');
-  blockers.push(...deliveryBlockers(env));
+  if(env.FEEDBACK_DELIVERY_READY!=='true')blockers.push('Email delivery setup not enabled');
   const now=Date.now();
   return {checked_at:new Date(now).toISOString(),blockers,rows:orders.map(order=>evaluateEligibility({order,campaign,profiles,subscribers,orders,invitations,now})),note:'Read-only eligibility check. Sending must recheck current eligibility and delivery configuration.'};
 }
