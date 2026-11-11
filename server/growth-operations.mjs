@@ -2,13 +2,13 @@ import { feedbackEligibility } from './feedback-eligibility.mjs';
 import { feedbackEdge } from './feedback-edge.mjs';
 const UUID=/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
 import { validateCampaign } from '../shared/feedback-campaign.mjs';
-import { reportingApprover } from './reporting-authority.mjs';
+import { reportingApprover, reportingCanReject } from './reporting-authority.mjs';
 export const IDEA_FIELDS=['title','segment','trigger_description','suggested_action','evidence','expected_benefit','cost','risks','owner','success_measure'];
 class HttpError extends Error{constructor(status,message){super(message);this.status=status;}}
 const checked=result=>{if(result.error)throw new HttpError(503,'Operations storage unavailable. Verify the database rollout.');return result.data;};
 export function validateIdea(body){return Object.fromEntries(IDEA_FIELDS.map(field=>{if(typeof body[field]!=='string'||!body[field].trim()||body[field].length>(field==='title'?200:4000))throw new HttpError(400,`Provide ${field}.`);return[field,body[field].trim()];}));}
-export function decisionChange(body,user,approver){
-  if(!approver||user!==approver)throw new HttpError(403,'Only the configured Professor account may decide proposals.');
+export function decisionChange(body,user,approver,canReject=false){
+  if((!approver||user!==approver)&&!(body.status==='rejected'&&canReject))throw new HttpError(403,'Only authorized accounts may decide proposals.');
   if(!UUID.test(body.id||'')||!Number.isInteger(body.version)||body.version<1||!['approved','rejected','completed'].includes(body.status))throw new HttpError(400,'Invalid decision.');
   if(body.status==='completed'&&(typeof body.outcome!=='string'||!body.outcome.trim()))throw new HttpError(400,'Record the outcome first.');
   if(body.outcome!=null&&(typeof body.outcome!=='string'||body.outcome.length>4000))throw new HttpError(400,'Invalid outcome.');
@@ -26,6 +26,7 @@ export function createGrowthOperationsHandler({createClient,env=process.env,edge
     const auth=await db.auth.getUser(token);if(auth.error||!auth.data?.user?.id)throw new HttpError(401,'Session expired.');
     const user=auth.data.user;
     const approver=reportingApprover(env,user);
+    const canReject=user.id===approver||reportingCanReject(env,user);
     if(!checked(await db.from('dashboard_admins').select('user_id').eq('user_id',user.id).eq('enabled',true).maybeSingle()))throw new HttpError(403,'Administrator access required.');
     if(req.method==='GET'){
       const params=new URL(req.url||'/', 'https://internal.invalid').searchParams;
@@ -33,11 +34,11 @@ export function createGrowthOperationsHandler({createClient,env=process.env,edge
         const id=params.get('campaign_id');
         if(!UUID.test(id||''))throw new HttpError(400,'Invalid campaign.');
         const eligibility=await feedbackEligibility(db,id,env);
-        try{const ready=await edge({env,token,body:{action:'readiness'}});eligibility.blockers.push(...ready.blockers);}catch{eligibility.blockers.push('Production feedback Edge Function unavailable. Deploy it and verify its secrets.');}
+        try{const ready=await edge({env,token,body:{action:'readiness'}});eligibility.blockers.push(...ready.blockers);}catch{eligibility.blockers.push('Testing feedback Edge Function unavailable. Deploy it and verify its secrets.');}
         return send(200,{...eligibility,canSend:user.id===approver});
       }
       const rows=await Promise.all(['growth_ideas','operation_exceptions','feedback_campaigns'].map(table=>db.from(table).select('*').order('created_at',{ascending:false}).limit(100)));
-      return send(200,{ideas:checked(rows[0]),exceptions:checked(rows[1]),campaigns:checked(rows[2]),canApprove:user.id===approver});
+      return send(200,{ideas:checked(rows[0]),exceptions:checked(rows[1]),campaigns:checked(rows[2]),canApprove:user.id===approver,canReject});
     }
     if(Buffer.byteLength(typeof req.body==='string'?req.body:JSON.stringify(req.body)||'')>30000)throw new HttpError(413,'Request too large.');
     let body;try{body=typeof req.body==='string'?JSON.parse(req.body):req.body;}catch{throw new HttpError(400,'Invalid JSON.');}
@@ -50,7 +51,7 @@ export function createGrowthOperationsHandler({createClient,env=process.env,edge
     }
     if(body.action==='create_idea')return send(201,{idea:checked(await db.from('growth_ideas').insert({...validateIdea(body),created_by:user.id}).select().single())});
     if(body.action==='decide_idea'){
-      const change=decisionChange(body,user.id,approver);
+      const change=decisionChange(body,user.id,approver,canReject);
       const row=checked(await db.from('growth_ideas').update(change).eq('id',body.id).eq('version',body.version).eq('status',body.status==='completed'?'approved':'pending').select().maybeSingle());
       if(!row)throw new HttpError(409,'Proposal changed. Refresh first.');return send(200,{idea:row});
     }
@@ -73,9 +74,9 @@ export function createGrowthOperationsHandler({createClient,env=process.env,edge
     if(body.action==='enable_campaign'){
       if(!approver||user.id!==approver)throw new HttpError(403,'Professor approval required.');
       if(env.FEEDBACK_DELIVERY_READY!=='true')throw new HttpError(503,'Delivery verification is not complete. Campaign remains disabled.');
+      if(!UUID.test(body.id||'')||!Number.isInteger(body.version))throw new HttpError(400,'Invalid campaign version.');
       const readiness=await edge({env,token,body:{action:'readiness'}});
       if(readiness.blockers.length)throw new HttpError(503,readiness.blockers.join('; '));
-      if(!UUID.test(body.id||'')||!Number.isInteger(body.version))throw new HttpError(400,'Invalid campaign version.');
       const current=checked(await db.from('feedback_campaigns').select('*').eq('id',body.id).single());
       try{validateCampaign(current);}catch(error){throw new HttpError(400,error.message);}
       const row=checked(await db.from('feedback_campaigns').update({enabled:true,paused:false,approved_by:user.id,approved_at:new Date().toISOString(),version:body.version+1}).eq('id',body.id).eq('version',body.version).select().maybeSingle());
