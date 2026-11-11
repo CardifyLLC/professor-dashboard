@@ -612,7 +612,6 @@ export const rejectAndRefundOrder = async ({ orderId, templateKey, adminNote = '
 
     const existing = await ordersClient.from('orders').select('metadata').eq('id',orderId).single();
     if (existing.error) throw existing.error;
-    if (isPartnerOrder(existing.data)) await partnerOrderRequest({action:'status',orderId,status:'cancelled'});
     const authHeaders = await getAdminAuthHeaders();
     const response = await fetch(`${supabaseUrl}/functions/v1/reject-order`, {
         method: 'POST',
@@ -638,6 +637,13 @@ export const rejectAndRefundOrder = async ({ orderId, templateKey, adminNote = '
         throw new Error(payload?.error || payload?.message || `Reject/refund failed with HTTP ${response.status}.`);
     }
 
+    if (response.status === 202 || payload?.success === false) {
+        throw new Error(payload?.error || 'Refund is pending confirmation. Retry the same request to check its status.');
+    }
+    if (payload?.success && isPartnerOrder(existing.data) && templateKey !== 'payment_issue') {
+        try { await partnerOrderRequest({action:'status',orderId,status:'cancelled'}); }
+        catch { payload.warning = 'Refund recorded. Partner cancellation needs reconciliation.'; }
+    }
     return payload;
 };
 
