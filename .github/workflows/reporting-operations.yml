@@ -1,0 +1,37 @@
+name: Reporting and operations
+on:
+  workflow_dispatch:
+    inputs:
+      kind:
+        description: Job to run (daily/weekly reuse the existing report schedule)
+        type: choice
+        options: [health, daily, weekly]
+        default: health
+  schedule:
+    - cron: '11,26,41,56 * * * *'
+permissions:
+  contents: read
+concurrency:
+  group: reporting-operations
+  cancel-in-progress: false
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      DASHBOARD_APP_URL: ${{ vars.DASHBOARD_APP_URL }}
+      REPORTING_JOB_SECRET: ${{ secrets.REPORTING_JOB_SECRET }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Run reporting job
+        env:
+          JOB_KIND: ${{ inputs.kind || 'health' }}
+        run: node scripts/reporting-job.mjs "$JOB_KIND"
+      - name: Independent fallback alert
+        if: failure()
+        env:
+          ALERT_URL: ${{ secrets.OPERATIONS_ALERT_WEBHOOK_URL }}
+        run: node scripts/operations-fallback-alert.mjs

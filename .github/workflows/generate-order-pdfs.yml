@@ -47,3 +47,13 @@ jobs:
 
       - name: Generate queued order PDFs
         run: npm run worker:order-pdfs
+      - name: Record PDF worker heartbeat
+        if: always()
+        env:
+          WORKER_STATUS: ${{ job.status == 'success' && 'ok' || 'failed' }}
+        run: node scripts/worker-health.mjs "$WORKER_STATUS"
+      - name: Alert on workflow failure
+        if: failure()
+        env:
+          ALERT_URL: ${{ secrets.OPERATIONS_ALERT_WEBHOOK_URL }}
+        run: node scripts/operations-fallback-alert.mjs
