@@ -1,3 +1,4 @@
+import { feedbackEligibility } from './feedback-eligibility.mjs';
 const UUID=/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
 import { validateCampaign } from '../shared/feedback-campaign.mjs';
 import { runFeedbackBatch } from './feedback-delivery.mjs';
@@ -27,6 +28,12 @@ export function createGrowthOperationsHandler({createClient,env=process.env}){re
     const approver=reportingApprover(env,user);
     if(!checked(await db.from('dashboard_admins').select('user_id').eq('user_id',user.id).eq('enabled',true).maybeSingle()))throw new HttpError(403,'Administrator access required.');
     if(req.method==='GET'){
+      const params=new URL(req.url||'/', 'https://internal.invalid').searchParams;
+      if(params.get('view')==='feedback-eligibility'){
+        const id=params.get('campaign_id');
+        if(!UUID.test(id||''))throw new HttpError(400,'Invalid campaign.');
+        return send(200,await feedbackEligibility(db,id,env));
+      }
       const rows=await Promise.all(['growth_ideas','operation_exceptions','feedback_campaigns'].map(table=>db.from(table).select('*').order('created_at',{ascending:false}).limit(100)));
       return send(200,{ideas:checked(rows[0]),exceptions:checked(rows[1]),campaigns:checked(rows[2]),canApprove:user.id===approver});
     }
