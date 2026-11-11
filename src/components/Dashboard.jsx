@@ -297,7 +297,7 @@ const Dashboard = () => {
                                 className={`nav-item ${activeView === 'map' ? 'active' : ''}`}
                                 onClick={() => { setActiveView('map'); setMobileMenuOpen(false); }}
                             >
-                                <span>Map</span> Order Map
+                                <span aria-hidden="true">🗺️</span> Order Map
                             </div>
                             <div
                                 className={`nav-item ${activeView === 'deleted-stats' ? 'active' : ''}`}
@@ -306,7 +306,7 @@ const Dashboard = () => {
                                 <span>🗑️</span> Deleted Orders
                             </div>
 
-                        <button type="button" className="nav-item" onClick={() => { setActiveView('growth-operations'); setMobileMenuOpen(false); }}>Growth and operations</button>
+                        <button type="button" className="nav-item" onClick={() => { setActiveView('growth-operations'); setMobileMenuOpen(false); }}><span aria-hidden="true">📈</span> Growth and operations</button>
                         </nav>
 
                         <div className="sidebar-apps">
