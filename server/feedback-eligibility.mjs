@@ -1,5 +1,6 @@
 import { readAll } from './report-sources.mjs';
 import { validateCampaign } from '../shared/feedback-campaign.mjs';
+import { deliveryBlockers } from './feedback-targeted.mjs';
 
 export function evaluateEligibility({order:o,campaign:c,profiles,subscribers,orders,invitations,now=Date.now()}) {
   const reasons=[];
@@ -22,7 +23,7 @@ export function evaluateEligibility({order:o,campaign:c,profiles,subscribers,ord
   if(own.some(i=>Date.parse(i.created_at)>now-Number(c.invitation_frequency_days)*86400000))reasons.push('Invitation frequency limit');
   if(campaignInvites.filter(i=>i.user_id===o.user_id).length>=c.reward_limit_per_customer)reasons.push('Customer invitation limit');
   if(campaignInvites.length>=c.max_invitations||(campaignInvites.length+1)*5>c.budget_prints||(campaignInvites.length+1)*c.email_unit_cost_minor>c.budget_email_minor||(campaignInvites.reduce((n,i)=>n+i.send_attempts,0)+1)*c.email_unit_cost_minor>c.budget_email_minor)reasons.push('Campaign budget or invitation limit');
-  return {order_id:o.id,email,account_linked:Boolean(o.user_id&&profile),payment_status:o.payment_status,order_status:o.status,eligible:reasons.length===0,reasons};
+  return {order_id:o.id,email,invitation_status:campaignInvites.find(i=>i.order_id===o.id)?.status||null,account_linked:Boolean(o.user_id&&profile),payment_status:o.payment_status,order_status:o.status,eligible:reasons.length===0,reasons};
 }
 
 export async function feedbackEligibility(db,campaignId,env){
@@ -37,7 +38,7 @@ export async function feedbackEligibility(db,campaignId,env){
   const blockers=[];
   try{validateCampaign(campaign);}catch{blockers.push('Campaign configuration incomplete');}
   if(!campaign.enabled||campaign.paused)blockers.push('Campaign disabled or paused');
-  if(env.FEEDBACK_DELIVERY_READY!=='true')blockers.push('Email delivery setup not enabled');
+  blockers.push(...deliveryBlockers(env));
   const now=Date.now();
   return {checked_at:new Date(now).toISOString(),blockers,rows:orders.map(order=>evaluateEligibility({order,campaign,profiles,subscribers,orders,invitations,now})),note:'Read-only eligibility check. Sending must recheck current eligibility and delivery configuration.'};
 }

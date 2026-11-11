@@ -6,13 +6,14 @@ export async function prepareFeedback({db,campaignId,orderId,secret}){
   const result=await db.rpc('prepare_feedback_invitation',{p_campaign:campaignId,p_order:orderId,p_invitation:id,p_token_hash:createHash('sha256').update(token).digest('hex')});
   if(result.error)throw new Error('Invitation not eligible or unavailable.');return result.data;
 }
-export async function deliverFeedback({db,invitationId,secret,origin,sendEmail,unsubscribeUrl}){
+export async function deliverFeedback({db,invitationId,secret,origin,sendEmail,unsubscribeUrl,expectedEmail}){
   const token=feedbackToken(invitationId,secret);
   if(new URL(origin).protocol!=='https:')throw new Error('HTTPS customer origin required.');
   const claimed=await db.rpc('claim_feedback_send',{p_invitation:invitationId});
   if(claimed.error)throw new Error('Could not verify invitation eligibility.');
   if(!claimed.data)return{sent:false,reason:'paused_suppressed_expired_or_already_claimed'};
   const invitation=claimed.data;
+  if(expectedEmail&&invitation.email.toLowerCase()!==expectedEmail.toLowerCase())throw new Error('Recipient changed; invitation retained for review without sending.');
   if(createHash('sha256').update(token).digest('hex')!==invitation.token_hash)throw new Error('Signing key mismatch; invitation retained for review.');
   let status='sent';
   try{
