@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { getAdminAuthHeaders } from '../services/supabaseClient';
 import FeedbackCampaignEditor from './FeedbackCampaignEditor';
 import BusinessReports from './BusinessReports';
+import './GrowthOperations.css';
 const fields=['title','segment','trigger_description','suggested_action','evidence','expected_benefit','cost','risks','owner','success_measure'];
 async function request(body){
   const response=await fetch('/api/growth-operations',{method:body?'POST':'GET',headers:{...await getAdminAuthHeaders(),'Content-Type':'application/json'},...(body?{body:JSON.stringify(body)}:{})});
@@ -13,7 +14,7 @@ export default function GrowthOperations(){
   const refresh=useCallback(async()=>{try{setData(await request());setError('');}catch(err){setError(err.message);}},[]);
   useEffect(()=>{refresh();},[refresh]);
   async function act(body){setBusy(true);setError('');try{await request(body);await refresh();}catch(err){setError(err.message);}finally{setBusy(false);}}
-  return <section className="detail-section"><h1>Growth and operations</h1>
+  return <section className="growth-operations"><h1>Growth and operations</h1>
     <BusinessReports/>
     <p>Ideas require Professor's decision. This queue records decisions; it does not send messages, change prices or spend money.</p>
     {error&&<p role="alert">{error}</p>}<button onClick={refresh} disabled={busy}>Refresh</button>
