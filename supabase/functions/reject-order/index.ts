@@ -2,6 +2,7 @@
 // Replaces nodemailer/SMTP — set GMAIL_SERVICE_ACCOUNT_JSON and GMAIL_SENDER_EMAIL in Supabase secrets
 
 import { adminAuthError, requireAdmin } from '../_shared/requireAdmin.ts';
+import { runRefund, refundRepository } from '../_shared/refund-operation.mjs';
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -165,7 +166,7 @@ const sendRejectionEmail = async ({
   );
 
   const result = await res.json();
-  if (!res.ok) throw new Error(`Gmail API error: ${JSON.stringify(result)}`);
+  if (!res.ok) throw Object.assign(new Error('Gmail rejected notification'), { retrySafe: res.status >= 400 && res.status < 500 });
   return { messageId: result.id as string };
 };
 
@@ -237,8 +238,9 @@ const findPaymentIntentId = async (
 // ── Handler ───────────────────────────────────────────────────────────────────
 
 Deno.serve(async (request) => {
+  let actor: { id: string; email: string };
   try {
-    await requireAdmin(request);
+    actor = await requireAdmin(request);
   } catch (error) {
     return adminAuthError(error) || Response.json({ error: 'Admin authentication failed.' }, { status: 500 });
   }
@@ -280,13 +282,64 @@ Deno.serve(async (request) => {
   if (!order) return json(404, { error: "Order not found." });
 
   const currentPaymentStatus = String(order.payment_status || "").toLowerCase();
-  if (currentPaymentStatus === "refunded") return json(409, { error: "This order is already marked as refunded." });
 
   const template = EMAIL_TEMPLATES[templateKey];
   if (!template) return json(404, { error: `Unknown templateKey: ${templateKey}` });
 
   const customerFirstName = (String(order.customer_name || "")).split(" ")[0];
   const metadata = parseMaybeJson(order.metadata);
+
+  if (templateKey !== 'payment_issue') {
+    try {
+      const amount = body?.amountMinor ?? null;
+      const operationId = body?.operationId;
+      if (amount !== null && (!Number.isSafeInteger(amount) || amount <= 0 || typeof operationId !== 'string' || !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(operationId))) return json(400, { error: 'Partial refunds require positive integer amountMinor and a stable operationId.' });
+      const requestKey = amount === null ? `order:${orderId}:full:v1` : `order:${orderId}:partial:${operationId}`;
+      if (currentPaymentStatus === 'refunded') {
+        const prior = await fetch(`${supabaseUrl}/rest/v1/refund_operations?request_key=eq.${encodeURIComponent(requestKey)}&select=id`, { headers: authHeaders });
+        if (!prior.ok || !(await prior.json()).length) return json(409, { error: 'Already refunded. No matching operation to retry.' });
+      }
+      const paymentIntent = await findPaymentIntentId(stripeSecretKey, order, metadata);
+      const repository = refundRepository({ url: supabaseUrl, headers: authHeaders });
+      let updatedOrder = null;
+      const result = await runRefund({
+        repository,
+        request: { request_key: requestKey, order_id: orderId, payment_intent: paymentIntent, amount_minor: amount, template_key: templateKey, created_by: actor.id, admin_note: adminNote || null },
+        refund: async ({ payment_intent, amount, idempotencyKey }: { payment_intent: string; amount: number | null; idempotencyKey: string }) => {
+          const payload = new URLSearchParams({ payment_intent, 'metadata[order_id]': orderId, 'metadata[operation_key]': requestKey });
+          if (amount !== null) payload.set('amount', String(amount));
+          return stripeRequest(stripeSecretKey, '/v1/refunds', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Idempotency-Key': idempotencyKey }, body: payload.toString() });
+        },
+        lookupRefund: (id: string) => stripeRequest(stripeSecretKey, `/v1/refunds/${encodeURIComponent(id)}`),
+        applyOrder: async (operation: { provider_reference: string; created_at: string; provider_result?: { created?: number } }) => {
+          const intent = await stripeRequest(stripeSecretKey, `/v1/payment_intents/${encodeURIComponent(paymentIntent)}?expand[]=latest_charge`);
+          const charge = intent.latest_charge;
+          if (!charge || typeof charge === 'string' || !Number.isSafeInteger(charge.amount_refunded) || !Number.isSafeInteger(charge.amount_captured)) throw new Error('Refund recorded; order reconciliation required.');
+          const full = charge.amount_refunded >= charge.amount_captured;
+          const update = await fetch(`${supabaseUrl}/rest/v1/orders?id=eq.${encodeURIComponent(orderId)}`, { method: 'PATCH', headers: authHeaders, body: JSON.stringify({ ...(full ? { status: 'cancelled', payment_status: 'refunded' } : {}), refund_reason_key: templateKey, refunded_at: operation.provider_result?.created ? new Date(operation.provider_result.created * 1000).toISOString() : operation.created_at, refund_reference: operation.provider_reference }) });
+          if (!update.ok) throw new Error('Refund recorded; order update failed. Retry this operation to reconcile.');
+          const rows = await update.json();
+          updatedOrder = Array.isArray(rows) ? rows[0] : null;
+        },
+        notify: async () => {
+          if (!serviceAccountJson || !order.customer_email) return { skipped: true };
+          return sendRejectionEmail({ serviceAccountJson, senderEmail, oauthSubject, toEmail: order.customer_email,
+            subject: amount === null ? template.subject : 'Partial refund recorded for your order',
+            text: amount === null ? template.text(customerFirstName) : `Hello${customerFirstName ? ' ' + customerFirstName : ''},\n\nA partial refund has been recorded for your order. Please check your payment provider for the confirmed amount and processing status.\n\nThe TCGPlaytest Team` });
+        },
+      });
+      return json(result.inProgress || result.operation.status === 'pending' ? 202 : result.requiresReview ? 409 : 200, {
+        success: result.operation.status === 'succeeded', order: updatedOrder, refund: { id: result.operation.provider_reference, status: result.operation.status },
+        operationId: result.operation.id, email: { status: result.operation.notification_status },
+        ...(result.notificationWarning ? { warning: result.notificationWarning } : {}),
+        ...(result.requiresReview ? { error: 'Refund needs reconciliation before retry.' } : {}),
+      });
+    } catch (error) {
+      console.error('Refund operation requires retry or reconciliation', error instanceof Error ? error.name : 'Error');
+      return json(503, { error: 'Refund operation could not finish. Retry the same operation; do not create a new refund request.' });
+    }
+  }
+  if (currentPaymentStatus === 'refunded') return json(409, { error: 'This order is already marked as refunded.' });
 
   try {
     const skipRefund = templateKey === "payment_issue";
