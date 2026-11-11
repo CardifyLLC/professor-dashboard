@@ -446,7 +446,7 @@ const OrderDetail = ({ order, onClose, onOrderUpdated }) => {
                 ? 'Refund created and email sent.'
                 : 'Refund created. Email requires follow-up.';
 
-            setRejectActionMessage(statusMessage);
+              setRejectActionMessage(result?.warning || statusMessage);
             setRejectAdminNote('');
             setSelectedRejectTemplateKey(null);
         } catch (error) {

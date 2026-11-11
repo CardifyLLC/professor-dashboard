@@ -2,12 +2,12 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { getAdminAuthHeaders, supabase } from '../services/supabaseClient';
 import { ORDER_REJECTION_TEMPLATES } from '../constants/rejectionTemplates';
 import PrintPackagePurchases from './PrintPackagePurchases';
+import FinancialSummary from './FinancialSummary';
 
 // ── Formatters ────────────────────────────────────────────────────────────────
-const fmt$ = (cents) =>
-    new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format((cents || 0) / 100);
-const fmtNum = (n) => new Intl.NumberFormat('en-US').format(n || 0);
-const fmtPct = (n, d) => (d > 0 ? ((n / d) * 100).toFixed(1) + '%' : '—');
+const fmt$ = (cents) => cents == null || !Number.isFinite(cents) ? 'Unavailable' :
+    new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(cents / 100);
+const fmtNum = (n) => n == null || !Number.isFinite(n) ? 'Unavailable' : new Intl.NumberFormat('en-US').format(n);
 const fmtDate = (str) => {
     if (!str) return '—';
     const d = new Date(str);
@@ -33,16 +33,16 @@ const isRevenueOrder = (order) => REVENUE_STATUSES.has(normalizedStatus(order)) 
 const localDateKey = (value) => {
     const date = value instanceof Date ? value : new Date(value);
     if (Number.isNaN(date.getTime())) return '';
-    const year = date.getFullYear();
-    const month = String(date.getMonth() + 1).padStart(2, '0');
-    const day = String(date.getDate()).padStart(2, '0');
+    const year = date.getUTCFullYear();
+    const month = String(date.getUTCMonth() + 1).padStart(2, '0');
+    const day = String(date.getUTCDate()).padStart(2, '0');
     return `${year}-${month}-${day}`;
 };
 const rangeStart = (days) => {
     if (!days) return null;
     const start = new Date();
-    start.setHours(0, 0, 0, 0);
-    start.setDate(start.getDate() - (days - 1));
+    start.setUTCHours(0, 0, 0, 0);
+    start.setUTCDate(start.getUTCDate() - (days - 1));
     return start;
 };
 const parseArchivedCustomers = (value) => {
@@ -122,8 +122,8 @@ const VBarChart = ({ data, valueKey, color = 'var(--accent-primary)', formatVal 
     );
 };
 
-const FunnelStep = ({ label, count, prevCount, color = 'var(--accent-primary)' }) => {
-    const rate = prevCount > 0 ? ((count / prevCount) * 100).toFixed(0) : null;
+const FunnelStep = ({ label, count, color = 'var(--accent-primary)' }) => {
+    const rate = null; // Legacy events are not a deduplicated, order-linked cohort.
     return (
         <div style={{ flex: 1, textAlign: 'center' }}>
             <div style={{ padding: '0.75rem', background: 'var(--bg-secondary)', borderRadius: '0.65rem', marginBottom: '0.4rem' }}>
@@ -163,6 +163,7 @@ const Analytics = ({ orders, onRefreshOrders, refreshingOrders = false }) => {
     const [deletedOrderStats, setDeletedOrderStats] = useState([]);
     const [stripeAnalytics, setStripeAnalytics] = useState(null);
     const [stripeError, setStripeError] = useState('');
+    const [dataErrors, setDataErrors] = useState([]);
     const [stripeLoading, setStripeLoading] = useState(true);
     const [refreshVersion, setRefreshVersion] = useState(0);
     const [loading, setLoading] = useState(true);
@@ -180,6 +181,7 @@ const Analytics = ({ orders, onRefreshOrders, refreshingOrders = false }) => {
 
     // ── Fetch analytics tables ────────────────────────────────────────────────
     useEffect(() => {
+        let cancelled = false;
         const fetchAll = async () => {
             setLoading(true);
             setStripeError('');
@@ -192,17 +194,15 @@ const Analytics = ({ orders, onRefreshOrders, refreshingOrders = false }) => {
                     : supabase.from(table).select('*').order(col, { ascending: false });
 
             const stripePromise = (async () => {
-                const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
                 const headers = await getAdminAuthHeaders();
                 const range = rangeDays || 'all';
-                const timezoneOffset = new Date().getTimezoneOffset();
                 const response = await fetch(
-                    `${supabaseUrl}/functions/v1/stripe-analytics?days=${range}&timezone_offset_minutes=${timezoneOffset}`,
+                    `/api/business-report?kind=range&days=${range}`,
                     { headers }
                 );
                 const result = await response.json();
                 if (!response.ok) throw new Error(result.error || 'Unable to load Stripe analytics.');
-                return result;
+                return { financials: result.financials, businessReport: result, summary: null, daily: [] };
             })();
 
             const [df, of, ft, np, er, ev, deleted, stripe] = await Promise.all([
@@ -216,7 +216,10 @@ const Analytics = ({ orders, onRefreshOrders, refreshingOrders = false }) => {
                     : supabase.from('analytics_events').select('*').order('created_at', { ascending: false }).limit(25),
                 supabase.from('order_daily_stats').select('*').order('stat_date', { ascending: false }),
                 stripePromise.catch((error) => ({ error })),
-            ]);
+            ].map(promise => Promise.resolve(promise).catch(error => ({ error }))));
+
+            if (cancelled) return;
+            setDataErrors([['Design funnel', df], ['Checkout funnel', of], ['Features', ft], ['Satisfaction', np], ['Errors', er], ['Events', ev], ['Archived orders', deleted]].filter(([, result]) => result.error).map(([name]) => `${name} unavailable; do not interpret empty results as zero.`));
 
             setDesignFunnel(df.data || []);
             setOrderFunnel(of.data || []);
@@ -236,6 +239,7 @@ const Analytics = ({ orders, onRefreshOrders, refreshingOrders = false }) => {
         };
 
         fetchAll();
+        return () => { cancelled = true; };
     }, [rangeDays, refreshVersion]);
 
     // ── Order metrics from prop ───────────────────────────────────────────────
@@ -385,18 +389,17 @@ const Analytics = ({ orders, onRefreshOrders, refreshingOrders = false }) => {
 
         const analyticsData = {
             period: rangeDays ? `Last ${rangeDays} days` : 'All time',
+            financials: stripeAnalytics?.financials ? {
+                ...stripeAnalytics.financials,
+                reconciliation: { ...stripeAnalytics.financials.reconciliation, issues: undefined, exception_count: stripeAnalytics.financials.reconciliation.issues.length },
+            } : { status: 'unavailable', reconciliation: { status: 'unreconciled' } },
+            dataQuality: { errors: dataErrors, financialError: stripeError || null, conversion: 'unverified' },
             orders: {
                 total: om.total,
                 completed: om.completed,
                 inProgress: om.inProgress,
                 pending: om.pending,
                 cancelled: om.cancelled,
-                refunded: om.refunded,
-                refundRate: `${fmtPct(om.refunded, om.total)}`,
-                grossRevenue: fmt$(om.gross),
-                refundedAmount: fmt$(om.refundedCents),
-                netRevenue: fmt$(om.net),
-                avgOrderValue: fmt$(om.avgCents),
                 totalCards: om.totalCards,
                 uniqueCustomers: om.uniqueCustomers,
                 statusBreakdown: om.statusCounts,
@@ -419,7 +422,7 @@ const Analytics = ({ orders, onRefreshOrders, refreshingOrders = false }) => {
                     'Content-Type': 'application/json',
                     ...authHeaders,
                 },
-                body: JSON.stringify({ model: aiModel, analyticsData, apiKey: apiKeys[aiModel] || undefined }),
+                body: JSON.stringify({ model: aiModel, analyticsData, days: rangeDays || 7, apiKey: apiKeys[aiModel] || undefined }),
             });
 
             const payload = await res.json();
@@ -528,18 +531,17 @@ const Analytics = ({ orders, onRefreshOrders, refreshingOrders = false }) => {
                 </div>
             )}
 
+            <FinancialSummary financials={stripeAnalytics?.financials} loading={stripeLoading} error={stripeError} />
+            {dataErrors.length > 0 && <div role="alert">{dataErrors.map(message => <p key={message}>{message}</p>)}</div>}
+            <p role="status">Conversion unverified: legacy events are not deduplicated or reliably linked to confirmed orders. Counts below are diagnostic only.</p>
             {/* ── Order summary cards ── */}
             <div className="stats-grid" style={{ marginBottom: '1.5rem' }}>
                 <StatCard
-                    label="Paid Orders"
+                    label="Paid checkout sessions"
                     value={stripeLoading ? '—' : fmtNum(stripeSummary?.total_orders)}
                     sub={stripeLoading ? 'Loading…' : 'Stripe'}
                 />
                 <StatCard label="Refunded Orders" value={stripeLoading ? '—' : fmtNum(stripeSummary?.refunded_orders)} sub={stripeLoading ? 'Loading…' : 'Stripe'} color="#ef4444" />
-                <StatCard label="Gross Revenue" value={stripeLoading ? '—' : fmt$(stripeSummary?.gross_revenue_cents)} sub={stripeLoading ? 'Loading…' : 'Stripe'} />
-                <StatCard label="Refunded Amount" value={stripeLoading ? '—' : fmt$(stripeSummary?.refunded_amount_cents)} sub={stripeLoading ? 'Loading…' : 'Stripe'} color="#ef4444" />
-                <StatCard label="Net Revenue" value={stripeLoading ? '—' : fmt$(stripeSummary?.net_revenue_cents)} sub={stripeLoading ? 'Loading…' : 'Stripe'} color="#22c55e" />
-                <StatCard label="Avg Order Value" value={stripeLoading ? '—' : fmt$(stripeSummary?.average_order_value_cents)} sub={stripeLoading ? 'Loading…' : 'Stripe paid orders'} />
                 <StatCard label="Unique Customers" value={stripeLoading ? '—' : fmtNum(stripeSummary?.unique_customers)} sub={stripeLoading ? 'Loading…' : 'Stripe'} />
                 <StatCard label="Completed" value={fmtNum(om.completed)} sub="Order workflow" color="#22c55e" />
                 <StatCard label="In Progress" value={fmtNum(om.inProgress)} sub="Order workflow" color="#8b5cf6" />
@@ -552,16 +554,16 @@ const Analytics = ({ orders, onRefreshOrders, refreshingOrders = false }) => {
 
             {/* ── Charts row ── */}
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '1.25rem', marginBottom: '1.25rem' }}>
-                <SectionCard title={`Stripe paid orders — last ${Math.min(rangeDays || 30, 30)} days`}>
-                    {stripeLoading
+                <SectionCard title={`Stripe paid sessions — last ${Math.min(rangeDays || 30, 30)} days`}>
+                    {stripeError || !stripeSummary ? <Empty text="Session history unavailable." /> : stripeLoading
                         ? <Empty text="Loading Stripe order history…" />
                         : <VBarChart data={dailyData} valueKey="orders" color="var(--accent-primary)" />}
                     <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: '4px' }}>
                         <span>{dailyData[0]?.label}</span><span>{dailyData[dailyData.length - 1]?.label}</span>
                     </div>
                 </SectionCard>
-                <SectionCard title={`Stripe net revenue — last ${Math.min(rangeDays || 30, 30)} days`}>
-                    {stripeLoading
+                <SectionCard title={`Legacy checkout cohort value — unverified`}>
+                    {stripeError || !stripeSummary || stripeAnalytics?.currency?.toLowerCase() !== 'usd' ? <Empty text="Cohort history unavailable." /> : stripeLoading
                         ? <Empty text="Loading Stripe revenue…" />
                         : <VBarChart data={dailyData} valueKey="revenue" color="#22c55e" formatVal={fmt$} />}
                     <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: '4px' }}>
@@ -641,12 +643,11 @@ const Analytics = ({ orders, onRefreshOrders, refreshingOrders = false }) => {
                     {/* Abandoned */}
                     {!loading && (() => {
                         const abandoned = (orderFunnel || []).filter((r) => r.event === 'checkout_abandoned').reduce((s, r) => s + Number(r.unique_sessions || 0), 0);
-                        const opened = orderFunnelAgg[0]?.count || 0;
                         if (!abandoned) return null;
                         return (
                             <div style={{ marginTop: '1rem', padding: '0.6rem 0.8rem', borderRadius: '0.5rem', background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)' }}>
                                 <span style={{ fontSize: '0.82rem', color: '#ef4444' }}>
-                                    {fmtNum(abandoned)} abandoned ({fmtPct(abandoned, opened)} of opened)
+                                    {fmtNum(abandoned)} abandonment signals — unverified
                                 </span>
                             </div>
                         );
