@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {deliverOnce,reportRecipients} from '../server/report-delivery.mjs';
 function fixture(){let row=null,sends=0,failPersistence=false;const db={from(){return{
- async upsert(value){row ||= {...value,id:'one',status:'pending'};return{};},
+ async upsert(value){row ||= {...value,id:'one',status:'pending',send_attempts:0};return{};},
  select(){return this;},eq(){return this;},async single(){return{data:{...row}};},
  update(change){const filters=[];return{eq(k,v){filters.push([k,v]);return this;},select(){return this;},async maybeSingle(){
   if(change.status!=='sending'&&failPersistence)return{error:{}};
@@ -13,6 +13,13 @@ function fixture(){let row=null,sends=0,failPersistence=false;const db={from(){r
 }
 test('concurrent daily jobs send one copy per recipient',async()=>{const f=fixture();await Promise.all([deliverOnce(f.args),deliverOnce(f.args)]);assert.equal(f.sends,1);assert.equal(f.row.provider_reference,'receipt');await deliverOnce(f.args);assert.equal(f.sends,1);});
 test('ambiguous mail timeout stays uncertain and cannot auto resend',async()=>{const f=fixture();let calls=0;const args={...f.args,sendEmail:async()=>{calls++;throw new Error('timeout');}};await deliverOnce(args);await deliverOnce(args);assert.equal(calls,1);assert.equal(f.row.status,'uncertain');});
-test('definite mail rejection is retryable independently',async()=>{const f=fixture();await deliverOnce({...f.args,sendEmail:async()=>{throw Object.assign(new Error('denied'),{definitelyRejected:true});}});assert.equal(f.row.status,'failed');await deliverOnce(f.args);assert.equal(f.row.status,'sent');});
+test('definite mail rejection is retried after backoff, with a bounded attempt count',async()=>{
+ const f=fixture(),now=new Date('2026-11-14'),reject=async()=>{throw Object.assign(new Error('denied'),{definitelyRejected:true});};
+ await deliverOnce({...f.args,now,sendEmail:reject});assert.equal(f.row.status,'failed');
+ assert.equal((await deliverOnce({...f.args,now})).status,'retry_deferred');
+ for(const minutes of [15,30])await deliverOnce({...f.args,now:new Date(+now+minutes*60000),sendEmail:reject});
+ assert.equal((await deliverOnce({...f.args,now:new Date(+now+60*60000)})).status,'retry_limit');assert.equal(f.row.send_attempts,3);
+ const retry=fixture();await deliverOnce({...retry.args,now,sendEmail:reject});await deliverOnce({...retry.args,now:new Date(+now+15*60000)});assert.equal(retry.row.status,'sent');
+});
 test('persistence failure after send retains sending state for manual reconciliation',async()=>{const f=fixture();f.fail();await assert.rejects(deliverOnce(f.args));await deliverOnce(f.args);assert.equal(f.sends,1);assert.equal(f.row.status,'sending');});
 test('production recipients are fixed; testing never inherits production addresses',()=>{assert.deepEqual(reportRecipients({SUPABASE_URL:'https://dunoesykjvdnpeavojsi.supabase.co'}),['superiorvideo@gmail.com','placeparks@gmail.com']);assert.throws(()=>reportRecipients({SUPABASE_URL:'https://jsxkyzdijoawzaiwfkfc.supabase.co'}));assert.deepEqual(reportRecipients({REPORT_TEST_RECIPIENTS:'test@example.invalid'}),['test@example.invalid']);});

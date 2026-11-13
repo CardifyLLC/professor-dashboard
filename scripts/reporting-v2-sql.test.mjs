@@ -31,6 +31,18 @@ test('real PostgreSQL migrations preserve facts, enforce server success and dedu
   assert.equal((await db.query('SELECT count(*)::int AS count FROM reporting_order_facts WHERE archived_at IS NOT NULL')).rows[0].count,1);
   assert.equal((await db.query('SELECT count(*)::int AS count FROM reporting_ledger_facts')).rows[0].count,1);
   assert.ok((await db.query('SELECT metadata FROM reporting_order_facts')).rows[0].metadata.paid_at);
+  // Full synthetic cash journey: all browser stages, one server checkout, and
+  // success only after trusted payment confirmation. Abandonment is not a sale.
+  await db.exec(`SELECT record_client_journey(gen_random_uuid(),'00000000-0000-0000-0000-000000000010',stage)
+   FROM unnest(ARRAY['visit','design_start','import_complete','preview','checkout_abandoned']) stage;
+   INSERT INTO orders(id,status,payment_status,total_amount_cents,currency,required_prints,wallet_prints_spent,metadata)
+   VALUES('00000000-0000-0000-0000-000000000011','pending','pending',100,'USD',0,0,'{"checkout_attempt_id":"00000000-0000-0000-0000-000000000011","analytics_session_id":"00000000-0000-0000-0000-000000000010"}');
+   UPDATE orders SET payment_status='failed' WHERE id='00000000-0000-0000-0000-000000000011';`);
+  assert.equal((await db.query("SELECT count(*)::int n FROM journey_events WHERE session_id='00000000-0000-0000-0000-000000000010' AND stage='payment_confirmed'")).rows[0].n,0);
+  await db.exec(`UPDATE orders SET payment_status='paid',status='paid' WHERE id='00000000-0000-0000-0000-000000000011';
+   UPDATE orders SET payment_status='paid' WHERE id='00000000-0000-0000-0000-000000000011';`);
+  const journey=(await db.query("SELECT stage,count(*)::int n FROM journey_events WHERE session_id='00000000-0000-0000-0000-000000000010' GROUP BY stage")).rows;
+  for(const stage of ['visit','design_start','import_complete','preview','checkout_start','payment_confirmed'])assert.equal(journey.find(row=>row.stage===stage)?.n,1,stage);
   const first=(await db.query("SELECT open_operation_exception('health:test',null,'failure','Owner','Inspect') AS item")).rows[0].item;
   const repeat=(await db.query("SELECT open_operation_exception('health:test',null,'failure','Owner','Inspect') AS item")).rows[0].item;
   assert.equal(first.id,repeat.id);assert.equal(first.version,repeat.version);

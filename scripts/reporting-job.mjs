@@ -1,6 +1,6 @@
-// Reuse from the existing report scheduler; no second daily schedule is installed.
+// Scheduled sweeps use durable keys to catch missed runs without duplicate mail.
 const kind=process.argv[2]||'daily';
-if(!['daily','weekly','health'].includes(kind))throw new Error('Use daily, weekly or health');
+if(!['daily','weekly','health','scheduled','ideas'].includes(kind))throw new Error('Use daily, weekly, health, scheduled or ideas');
 const origin=process.env.DASHBOARD_APP_URL,secret=process.env.REPORTING_JOB_SECRET;
 if(!origin||new URL(origin).protocol!=='https:'||!secret||secret.length<32)throw new Error('Reporting origin/job secret missing');
 const url=new URL('/api/reporting-job',origin);url.searchParams.set('kind',kind);
