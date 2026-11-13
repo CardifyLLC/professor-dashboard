@@ -3,9 +3,9 @@ on:
   workflow_dispatch:
     inputs:
       kind:
-        description: Job to run (daily/weekly reuse the existing report schedule)
+        description: Job to run (scheduled catches due UTC daily and weekly reports)
         type: choice
-        options: [health, daily, weekly]
+        options: [health, scheduled, daily, weekly, ideas]
         default: health
   schedule:
     - cron: '11,26,41,56 * * * *'
@@ -28,8 +28,14 @@ jobs:
           node-version: '24'
       - name: Run reporting job
         env:
-          JOB_KIND: ${{ inputs.kind || 'health' }}
+          JOB_KIND: ${{ inputs.kind || 'scheduled' }}
         run: node scripts/reporting-job.mjs "$JOB_KIND"
+      - name: Monitor operations
+        if: always() && github.event_name == 'schedule'
+        run: node scripts/reporting-job.mjs health
+      - name: Generate weekly proposals
+        if: github.event_name == 'schedule' && vars.GROWTH_IDEAS_ENABLED == 'true'
+        run: node scripts/reporting-job.mjs ideas
       - name: Independent fallback alert
         if: failure()
         env:
