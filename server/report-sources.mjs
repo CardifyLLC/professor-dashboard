@@ -1,4 +1,5 @@
 import { buildBusinessReport } from './business-metrics.mjs';
+import { applyReconciliationEvidence } from './reconciliation-evidence.mjs';
 
 export function decimalMinor(value,currency) {
   if (!/^[A-Z]{3}$/.test(currency)) throw new Error('Invalid currency');
@@ -39,7 +40,7 @@ export async function stripeMovements({env,start,end,fetchImpl=fetch}) {
         const matches=sessionCache.get(pi);if(matches.length===1)session=matches[0];
       }
       const metadata={...session?.metadata,...charge?.metadata,...source?.metadata};
-      rows.push({id:'stripe:'+row.id,provider:'stripe',kind,amount_minor:Math.abs(row.amount),currency:String(row.currency).toUpperCase(),created_at:new Date(row.created*1000).toISOString(),original_amount_minor:kind==='sale'?(source?.amount_captured??source?.amount??null):(source?.amount??null),original_currency:source?.currency?.toUpperCase()||null,
+      rows.push({id:'stripe:'+row.id,provider:'stripe',kind,amount_minor:Math.abs(row.amount),signed_amount_minor:row.amount,currency:String(row.currency).toUpperCase(),created_at:new Date(row.created*1000).toISOString(),original_amount_minor:kind==='sale'?(source?.amount_captured??source?.amount??null):(source?.amount??null),original_currency:source?.currency?.toUpperCase()||null,
         package:session?.metadata?.productType==='print_package'?{amount_minor:session.amount_total,currency:session.currency?.toUpperCase(),prints:Number(session.metadata.immediatePrints)}:null,
         references:[source?.id,charge?.id,pi,session?.id,session?.id?'stripe:'+session.id:null,metadata.order_id,metadata.orderId,metadata.tempOrderId].filter(Boolean)});
     }
@@ -90,12 +91,14 @@ export async function collectBusinessReport({db,env,start,end,fetchImpl=fetch,no
     load('stripe',()=>stripeMovements({env,start:previousStart,end,fetchImpl})),load('paypal',()=>paypalMovements({env,start:previousStart,end,fetchImpl})),
     load('storefront',()=>readAll(db,'reporting_order_facts','id,user_id,status,payment_status,total_amount_cents,currency,stripe_session_id,paypal_order_id,paypal_capture_id,wallet_prints_spent,required_prints,refunded_at,created_at,metadata,archived_at')),
     load('prints_ledger',()=>readAll(db,'reporting_ledger_facts','id,entry_type,prints_delta,related_order_id,external_reference,created_at,metadata')),
+    load('reconciliation_evidence',()=>readAll(db,'reporting_reconciliation_evidence')),
     ...[['exceptions','operation_exceptions'],['ideas','growth_ideas'],['journey','journey_events'],['attempts','checkout_attempts'],['health','operation_health'],['campaigns','feedback_campaigns'],['invitations','feedback_invitations']].map(([key,table])=>load(key,()=>readAll(db,table))),
     load('pdf_jobs',()=>readAll(db,'order_pdf_generations','order_id,status',q=>q,'order_id')),
     load('shipping',()=>readAll(db,'shipment_tracking_notifications','id,order_id,status,created_at')),
     load('delivery',()=>readAll(db,'report_deliveries','id,status,created_at')),
     load('claims',async()=>{const result=await db.from('feedback_claims').select('invitation_id,user_id,ledger_id,created_at').limit(10001);if(result.error||result.data.length>10000)throw new Error('Claims source unavailable or too large');return result.data;}),
   ]);
+  data.storefront=applyReconciliationEvidence(data.storefront,data.reconciliation_evidence);
   // Provider reporting is delayed: an incomplete freshness horizon must never appear reconciled.
   if(coverage.paypal.status==='available'&&Date.parse(end)>now.getTime()-3*3600000)coverage.paypal={...coverage.paypal,status:'provisional',reason:'PayPal reporting can lag; re-run at least three hours after period end'};
   const report=buildBusinessReport({start,end,fetchedAt:now.toISOString(),movements:[...data.stripe,...data.paypal],orders:data.storefront,ledger:data.prints_ledger,coverage,exceptions:data.exceptions,ideas:data.ideas,events:data.journey,attempts:data.attempts,health:data.health,campaigns:data.campaigns,invitations:data.invitations,claims:data.claims,agedHours:Number(env.REPORT_AGED_ORDER_HOURS)||72,conversionValidated:env.CONVERSION_VALIDATED==='true'});

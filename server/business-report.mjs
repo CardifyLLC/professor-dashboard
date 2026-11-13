@@ -15,10 +15,10 @@ export function reportWindow(params, now=new Date()) {
 }
 export function aiReportInput(report) {
   const f=report.financials;
-  return {version:report.version,financials:{...f,reconciliation:{status:f.reconciliation.status,exception_count:f.reconciliation.issues.length}},comparison:report.comparison,conversion:report.conversion,
+  return {version:report.version,financials:{...f,reconciliation:{status:f.reconciliation.status,stripe_and_prints:f.reconciliation.stripe_and_prints,exception_count:f.reconciliation.issues.length}},comparison:report.comparison,conversion:report.conversion,
     operations:{aged_orders:report.operations.aged_orders?.length??null,pdf_failures:report.operations.pdf_failures?.length??null,health_failures:report.operations.health_failures?.length??null,open_exceptions:report.operations.exceptions?.length??null},
     growth:{repeat_paid_orders:report.growth.repeat_paid_orders,affiliate_orders:report.growth.affiliate_orders,partner_orders:report.growth.partner_orders},
-    constraints:['No automatic messages, discounts, spending, prices or delivery promises. Professor approval required.','Only use matched financials and verified conversion for recommendations involving money or growth.']};
+    constraints:['No automatic messages, discounts, spending, prices or delivery promises. Authorized approver decision required.','Only use matched financials and verified conversion for recommendations involving money or growth.']};
 }
 export function createBusinessReportHandler({createClient,env=process.env,collect=collectBusinessReport}) {return async(req,res)=>{
   const send=(status,data)=>{res.statusCode=status;res.setHeader('Content-Type','application/json');res.setHeader('Cache-Control','private, no-store');res.end(JSON.stringify(data));};

@@ -29,12 +29,20 @@ export function createGrowthOperationsHandler({createClient,env=process.env,edge
     if(!checked(await db.from('dashboard_admins').select('user_id').eq('user_id',user.id).eq('enabled',true).maybeSingle()))throw new HttpError(403,'Administrator access required.');
     if(req.method==='GET'){
       const params=new URL(req.url||'/', 'https://internal.invalid').searchParams;
+      if(params.get('view')==='report-deliveries'){
+        const [deliveries,runs]=await Promise.all([
+          db.from('report_deliveries').select('id,delivery_key,recipient,status,send_attempts,provider_reference,next_attempt_at,updated_at').order('updated_at',{ascending:false}).limit(50),
+          db.from('growth_generation_runs').select('id,generation_key,status,attempts,updated_at,next_attempt_at').order('updated_at',{ascending:false}).limit(20),
+        ]);
+        return send(200,{deliveries:checked(deliveries),runs:checked(runs),canApprove:user.id===approver});
+      }
       if(params.get('view')==='feedback-eligibility'){
         const id=params.get('campaign_id');
         if(!UUID.test(id||''))throw new HttpError(400,'Invalid campaign.');
         const eligibility=await feedbackEligibility(db,id,env);
+        eligibility.blockers.push('Feedback campaign delivery is testing-only. Production remains paused.');
         try{const ready=await edge({env,token,body:{action:'readiness'}});eligibility.blockers.push(...ready.blockers);}catch{eligibility.blockers.push('Production feedback Edge Function unavailable. Deploy it and verify its secrets.');}
-        return send(200,{...eligibility,canSend:user.id===approver});
+        return send(200,{...eligibility,canSend:false});
       }
       const rows=await Promise.all(['growth_ideas','operation_exceptions','feedback_campaigns'].map(table=>db.from(table).select('*').order('created_at',{ascending:false}).limit(100)));
       return send(200,{ideas:checked(rows[0]),exceptions:checked(rows[1]),campaigns:checked(rows[2]),canApprove:user.id===approver});
@@ -42,6 +50,14 @@ export function createGrowthOperationsHandler({createClient,env=process.env,edge
     if(Buffer.byteLength(typeof req.body==='string'?req.body:JSON.stringify(req.body)||'')>30000)throw new HttpError(413,'Request too large.');
     let body;try{body=typeof req.body==='string'?JSON.parse(req.body):req.body;}catch{throw new HttpError(400,'Invalid JSON.');}
     if(!body||typeof body!=='object')throw new HttpError(400,'Invalid request.');
+    if(['enable_campaign','send_feedback_invitation','run_feedback_batch'].includes(body.action))throw new HttpError(403,'Feedback campaign delivery is testing-only. Production remains paused.');
+    if(body.action==='review_report_delivery'){
+      if(!approver||user.id!==approver)throw new HttpError(403,'Authorized approver required.');
+      if(!UUID.test(body.id||'')||!['accepted','not_accepted'].includes(body.outcome)||typeof body.reference!=='string'||!body.reference.trim()||body.reference.length>500||typeof body.note!=='string'||body.note.trim().length<10||body.note.length>2000)throw new HttpError(400,'Record the provider reference and review evidence.');
+      const result=await db.rpc('review_report_delivery',{p_delivery:body.id,p_actor:user.id,p_outcome:body.outcome,p_reference:body.reference,p_note:body.note});
+      if(result.error)throw new HttpError(409,'Report changed or is not awaiting review. Refresh first.');
+      return send(200,{review:result.data});
+    }
     if(body.action==='send_feedback_invitation'){
       if(!approver||user.id!==approver)throw new HttpError(403,'Authorized production approver required.');
       if(!UUID.test(body.id||'')||!UUID.test(body.order_id||'')||typeof body.expected_email!=='string'||body.expected_email.length>254)throw new HttpError(400,'Invalid invitation recipient.');

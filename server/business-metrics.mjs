@@ -1,5 +1,5 @@
 // Pure, versioned contract used by the private dashboard, reports and AI input.
-export const METRIC_VERSION = 'business-v2';
+export const METRIC_VERSION = 'business-v3';
 const meta = row => typeof row?.metadata === 'object' && row.metadata ? row.metadata : {};
 const time = value => typeof value === 'number' ? value * 1000 : Date.parse(value);
 const inside = (value, start, end) => time(value) >= start && time(value) < end;
@@ -19,7 +19,7 @@ export function buildBusinessReport({ start, end, fetchedAt, movements = [], ord
   if (!Number.isFinite(start) || !Number.isFinite(end) || start >= end) throw new Error('Invalid report window');
   orders = uniqueRows(orders, 'orders'); ledger = uniqueRows(ledger, 'ledger');
   movements = uniqueRows(movements, 'movements');
-  const issues = [], currencies = new Map(), matched = new Set(), refundedByOrder = new Map();
+  const issues = [], excludedMovements = [], currencies = new Map(), matched = new Set(), refundedByOrder = new Map();
   const ledgerById=new Map(ledger.map(l=>[l.id,l])),purchasesByReference=new Map(),debitsByOrder=new Map();
   for(const entry of ledger){
     if(entry.entry_type==='purchase'&&entry.external_reference){const rows=purchasesByReference.get(entry.external_reference)||[];rows.push(entry);purchasesByReference.set(entry.external_reference,rows);}
@@ -32,7 +32,13 @@ export function buildBusinessReport({ start, end, fetchedAt, movements = [], ord
   const periodMovements = movements.filter(m => inside(m.created_at, start, end));
   for (const movement of periodMovements) {
     if (!/^[A-Z]{3}$/.test(movement.currency) || !Number.isSafeInteger(movement.amount_minor)) throw new Error('Invalid money movement');
-    if (!['sale','refund'].includes(movement.kind)) { issue(movement.id, 'excluded_' + movement.kind, movement.provider); continue; }
+    if (!['sale','refund'].includes(movement.kind)) {
+      excludedMovements.push({reference:movement.id,provider:movement.provider,kind:movement.kind,currency:movement.currency,amount_minor:movement.signed_amount_minor??null});
+      // Normal settlements and fees are outside gross customer cash. Disputes,
+      // adjustments and unknown types still need explicit reconciliation.
+      if(!['payout','payout_cancel','payout_failure','stripe_fee','stripe_fx_fee'].includes(movement.kind))issue(movement.id,'review_'+movement.kind,movement.provider);
+      continue;
+    }
     const bucket = currencies.get(movement.currency) || {currency:movement.currency,cash_collected_minor:0,refunds_minor:0,net_cash_minor:0};
     if (movement.kind === 'sale') bucket.cash_collected_minor += movement.amount_minor;
     else bucket.refunds_minor += movement.amount_minor;
@@ -56,7 +62,8 @@ export function buildBusinessReport({ start, end, fetchedAt, movements = [], ord
       if (!['paid','refunded'].includes(order.payment_status)) issue(order.id,'provider_paid_order_not_paid',movement.provider);
       if (order.status==='cancelled' && order.payment_status!=='refunded') issue(order.id,'cancelled_order_with_cash',movement.provider);
     } else {
-      if (!order.refunded_at && order.payment_status!=='refunded') issue(order.id,'provider_refund_not_recorded_on_order',movement.provider);
+      const recordedRefund=meta(order).refund_evidence?.some(row=>row.provider_reference===movement.id&&row.amount_minor===movement.original_amount_minor&&row.currency===movement.original_currency);
+      if (!order.refunded_at && order.payment_status!=='refunded'&&!recordedRefund) issue(order.id,'provider_refund_not_recorded_on_order',movement.provider);
       if (String(order.currency).toUpperCase()!==movement.original_currency) issue(order.id,'refund_currency_mismatch',movement.provider);
       const total=(refundedByOrder.get(order.id)||0)+movement.original_amount_minor;
       refundedByOrder.set(order.id,total);
@@ -88,10 +95,12 @@ export function buildBusinessReport({ start, end, fetchedAt, movements = [], ord
   if(!Object.values(units).every(Number.isSafeInteger))throw new Error('PRINTS total exceeds safe integer range');
   const unavailable=Object.entries(coverage).filter(([,v])=>v.status!=='available');
   const financialAvailable=['stripe','paypal'].every(key=>coverage[key]?.status==='available');
-  const settled=financialAvailable && !issues.length && ['storefront','prints_ledger'].every(key=>coverage[key]?.status==='available');
+  const settled=financialAvailable && !issues.length && ['storefront','prints_ledger'].every(key=>coverage[key]?.status==='available') && coverage.reconciliation_evidence?.status!=='unavailable';
+  const stripePrintsMatched=['stripe','storefront','prints_ledger'].every(key=>coverage[key]?.status==='available')
+    && coverage.reconciliation_evidence?.status!=='unavailable' && !issues.some(i=>i.provider!=='paypal');
   const financials={version:METRIC_VERSION,period:{start:new Date(start).toISOString(),end:new Date(end).toISOString(),timezone:'UTC',end_exclusive:true},source:'Stripe balance movements + PayPal transaction search + storefront + PRINTS ledger',fetched_at:fetchedAt,
     status:financialAvailable?'available':'partial',coverage,currencies:[...currencies.values()].sort((a,b)=>a.currency.localeCompare(b.currency)),prints:coverage.prints_ledger?.status==='available'?units:null,
-    reconciliation:{status:settled?'matched':'unreconciled',reconciled_at:settled?fetchedAt:null,issues},warnings:[...unavailable.map(([key,v])=>`${key}: ${v.reason || v.status}`),'Cash is before provider fees; payouts, disputes, transfers and adjustments are separate exceptions. PRINTS redemptions are units, never a second cash sale.']};
+    reconciliation:{status:settled?'matched':'unreconciled',reconciled_at:settled?fetchedAt:null,issues,stripe_and_prints:{status:stripePrintsMatched?'matched':'unreconciled',excludes:'PayPal; overall coverage remains separate'},excluded_movements:excludedMovements},warnings:[...unavailable.map(([key,v])=>`${key}: ${v.reason || v.status}`),'Cash is before provider fees. Payouts and fees are listed separately; disputes, transfers and adjustments require review. PRINTS redemptions are units, never a second cash sale.']};
   const aged=orders.filter(o=>!o.archived_at && ['paid','processing','printing'].includes(o.status) && Date.parse(fetchedAt)-Date.parse(o.created_at)>agedHours*3600000).map(o=>({order_id:o.id,age_hours:Math.floor((Date.parse(fetchedAt)-Date.parse(o.created_at))/3600000),issue:'aged_order',owner:'Operations',next_action:'Review production status and customer update'}));
   const pdfFailures=orders.filter(o=>o.pdf_status==='failed' || meta(o).pdf_status==='failed' || meta(o).order_pdf_status==='failed').map(o=>({order_id:o.id,issue:'pdf_failed',owner:'Production',next_action:'Inspect PDF job and retry after correction'}));
   const now=Date.parse(fetchedAt);
