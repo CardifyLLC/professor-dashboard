@@ -1,3 +1,4 @@
+import { reportEmail } from './report-email.mjs';
 import production from '../config/reporting.production.json' with { type: 'json' };
 import { createEnvelopeMailer } from '../supabase/functions/_shared/envelope-mailer.mjs';
 export function reportRecipients(env) {
@@ -7,18 +8,7 @@ export function reportRecipients(env) {
   if(!recipients.length||recipients.some(v=>!/^\S+@\S+\.\S+$/.test(v)||/[\r\n]/.test(v)))throw new Error('Explicit testing report recipients required');
   return [...new Set(recipients)];
 }
-export function reportText(report) {
-  const f=report.financials;
-  return [`TCGPlaytest ${report.kind||'business'} report`,`${f.period.start} to ${f.period.end} (exclusive), UTC`,
-    `Metric version: ${report.version}; refreshed ${f.fetched_at}; reconciliation ${f.reconciliation.status}`,
-    `Stripe and PRINTS reconciliation: ${f.reconciliation.stripe_and_prints?.status||'unverified'} (excludes PayPal). Other balance movements: ${JSON.stringify(f.reconciliation.excluded_movements||[])}`,
-    ...f.currencies.map(c=>`${c.currency}: collected ${c.cash_collected_minor} minor units; refunds ${c.refunds_minor}; net ${c.net_cash_minor}`),
-    `PRINTS units: ${JSON.stringify(f.prints)}`,`Source warnings: ${f.warnings.join(' | ')}`,
-    `Unmatched/reconciliation exceptions: ${JSON.stringify(f.reconciliation.issues)}`,
-    `Previous period comparison: ${JSON.stringify(report.comparison)}`,`Conversion: ${JSON.stringify(report.conversion)}`,`Operations: ${JSON.stringify(report.operations)}`,
-    `Growth / experiment outcomes: ${JSON.stringify(report.growth)}`,`Feedback campaign monitoring: ${JSON.stringify(report.campaigns)}`,
-    `Consequential actions require approval from ${production.approvers.map(account=>account.email).join(' or ')}. This report executes no campaign, refund, discount or shipping commitment.`].join('\n\n');
-}
+export function reportText(report, options = {}) { return reportEmail(report, options).text; }
 export async function deliverOnce({db,key,recipient,report,subject,text,sendEmail,now=new Date(),messageForReport}) {
   const inserted=await db.from('report_deliveries').upsert({delivery_key:key,recipient,report},{onConflict:'delivery_key',ignoreDuplicates:true});
   if(inserted.error)throw new Error('Delivery reservation failed');
@@ -47,7 +37,7 @@ export async function deliverReport({db,env,report,prepareMailer=()=>createEnvel
   };
   const outcomes=[];
   const testing=(env.SUPABASE_URL||env.VITE_SUPABASE_URL)!==`https://${production.supabase_project_id}.supabase.co`;
-  for(const recipient of recipients)outcomes.push(await deliverOnce({db,key:reportDeliveryKey(report,recipient),recipient,report,now,messageForReport:stored=>({subject:`${testing?'[TEST] ':''}TCGPlaytest ${stored.kind} report — ${stored.financials.period.start.slice(0,10)}`,text:(testing?'TESTING ENVIRONMENT — this is not a production business report.\n\n':'')+reportText(stored)}),sendEmail}));
+  for(const recipient of recipients)outcomes.push(await deliverOnce({db,key:reportDeliveryKey(report,recipient),recipient,report,now,messageForReport:stored=>reportEmail(stored,{testing,dashboardUrl:env.DASHBOARD_APP_URL,aiEnabled:env.GROWTH_IDEAS_ENABLED==='true'}),sendEmail}));
   return outcomes;
 }
 export function reportDeliveryKey(report,recipient){return`${report.kind}:${report.financials.period.start}:${report.financials.period.end}:${recipient}`;}

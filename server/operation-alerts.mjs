@@ -1,3 +1,5 @@
+import production from '../config/reporting.production.json' with { type: 'json' };
+import { operationsEmail } from './report-email.mjs';
 import { readAll } from './report-sources.mjs';
 import { reportRecipients,deliverOnce } from './report-delivery.mjs';
 import { createEnvelopeMailer } from '../supabase/functions/_shared/envelope-mailer.mjs';
@@ -49,8 +51,8 @@ export async function monitorOperations({db,env,fetchImpl=fetch,now=new Date(),p
     const fingerprint=createHash('sha256').update(items.map(i=>`${i.id}:${i.version}`).sort().join('|')).digest('hex');
     let mailer;
     const sendEmail=async(...args)=>{try{mailer ||= await prepareMailer();}catch(error){error.definitelyRejected=true;throw error;}return mailer.send(...args);};
-    const text=items.map(item=>`${item.issue}\nOrder: ${item.order_id||'N/A'}\nOwner: ${item.owner||owner}\nNext: ${item.next_action}`).join('\n\n');
-    for(const recipient of recipients)outcomes.push(await deliverOnce({db,key:`alert:digest:${fingerprint}:${recipient}`,recipient,report:{exceptions:items},subject:`TCGPlaytest operations — ${items.length} items need review`,text,sendEmail,now}));
+    const emailOptions={testing:(env.SUPABASE_URL||env.VITE_SUPABASE_URL)!=='https://'+production.supabase_project_id+'.supabase.co',dashboardUrl:env.DASHBOARD_APP_URL,owner,now:now.toISOString()};
+    for(const recipient of recipients)outcomes.push(await deliverOnce({db,key:`alert:digest:${fingerprint}:${recipient}`,recipient,report:{exceptions:items},messageForReport:stored=>operationsEmail(stored.exceptions,emailOptions),sendEmail,now}));
   }
   const heartbeat=await db.from('operation_health').upsert({id:'operations-monitor',status:'ok',checked_at:now.toISOString(),max_age_minutes:45,owner,detail:'Operations scan completed'});
   if(heartbeat.error)throw new Error('Monitor heartbeat failed');
