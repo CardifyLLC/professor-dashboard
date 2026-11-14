@@ -8,6 +8,30 @@ const base64 = bytes => {
 const encoded = text => base64(new TextEncoder().encode(text));
 const url64 = text => text.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 
+// Gmail accepts a MIME message. Keep plain text for all callers and add an HTML
+// alternative only when explicitly supplied by the report renderer.
+export function buildEnvelopeMessage(email, id, sender) {
+  if (!validEmail(email.to) || !validEmail(sender) || typeof email.subject !== 'string'
+      || /[\r\n]/.test(email.subject) || typeof id !== 'string' || /[\r\n<>]/.test(id)
+      || typeof email.text !== 'string' || (email.html !== undefined && typeof email.html !== 'string')) {
+    throw Object.assign(new Error('Invalid email'), { definitelyRejected: true });
+  }
+  const headers = [
+    'From: "TCGPlaytest" <' + sender + '>', 'To: ' + email.to, 'Reply-To: support@tcgplaytest.com',
+    'Subject: =?UTF-8?B?' + encoded(email.subject) + '?=', 'Message-ID: <envelope-' + id + '@tcgplaytest.com>',
+    'MIME-Version: 1.0',
+  ];
+  const body = value => (encoded(value).match(/.{1,76}/g) || []).join('\r\n');
+  if (!email.html) return [...headers, 'Content-Type: text/plain; charset=utf-8',
+    'Content-Transfer-Encoding: base64', '', body(email.text)].join('\r\n');
+  const boundary = 'tcgplaytest-' + crypto.randomUUID();
+  return [...headers, 'Content-Type: multipart/alternative; boundary="' + boundary + '"', '',
+    '--' + boundary, 'Content-Type: text/plain; charset=utf-8', 'Content-Transfer-Encoding: base64', '', body(email.text),
+    '--' + boundary, 'Content-Type: text/html; charset=utf-8', 'Content-Transfer-Encoding: base64', '', body(email.html),
+    '--' + boundary + '--', '',
+  ].join('\r\n');
+}
+
 export function createEnvelopeMailer({ env, fetchImpl = fetch }) {
   return { async prepare() {
     let account;
@@ -32,12 +56,7 @@ export function createEnvelopeMailer({ env, fetchImpl = fetch }) {
     if (!auth.ok || !token.access_token) throw new Error('MAIL_AUTH');
     return { async send(email, id) {
       if (!validEmail(email.to) || /[\r\n]/.test(email.subject)) throw Object.assign(new Error('Invalid email'), { definitelyRejected: true });
-      const raw = [
-        `From: "TCGPlaytest" <${sender}>`, `To: ${email.to}`, 'Reply-To: support@tcgplaytest.com',
-        `Subject: =?UTF-8?B?${encoded(email.subject)}?=`, `Message-ID: <envelope-${id}@tcgplaytest.com>`,
-        'MIME-Version: 1.0', 'Content-Type: text/plain; charset=utf-8', 'Content-Transfer-Encoding: base64', '',
-        encoded(email.text).match(/.{1,76}/g).join('\r\n'),
-      ].join('\r\n');
+      const raw = buildEnvelopeMessage(email, id, sender);
       const response = await fetchImpl('https://gmail.googleapis.com/gmail/v1/users/me/messages/send', {
         method: 'POST', signal: AbortSignal.timeout(20000), headers: { Authorization: `Bearer ${token.access_token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({ raw: url64(encoded(raw)) }),
