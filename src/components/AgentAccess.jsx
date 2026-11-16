@@ -144,6 +144,8 @@ export default function AgentAccess() {
       <ol className="aa-steps"><li>Create a key and put it in the agent platform’s private credential settings.</li><li>Configure an HTTP/API tool using the endpoint and header below, or import the OpenAPI schema.</li><li>For orders, give the agent an order ID or dashboard order link. For other allowed sections, configure the section endpoint below.</li></ol>
       <label>Order endpoint<input value={endpoint} readOnly onFocus={event => event.target.select()} /></label>
       <label>Section endpoint<input value={origin + '/api/agent-read?section=orders'} readOnly onFocus={event => event.target.select()} /></label>
+      <label>Affiliate leaderboard endpoint<input value={origin + '/api/agent-read?section=affiliate-leaderboard'} readOnly onFocus={event => event.target.select()} /></label>
+      <p className="aa-small">Enable Affiliate leaderboard in the key's allowed sections. Returns the same all-time top 15 as Discord, with referral counts and affiliate-earned PRINTS. This list has no filters or additional pages.</p>
       <p className="aa-small">Section IDs: {TEAM_SECTIONS.map(section => section.id).join(', ')}. Use offset for pagination, q for supported searches, and id for order or email-campaign details. Only checked sections are accessible.</p>
       <pre>{'GET ' + endpoint + '\nAuthorization: Bearer YOUR_AGENT_KEY'}</pre>
       <button onClick={() => copy('GET ' + endpoint + '\nAuthorization: Bearer YOUR_AGENT_KEY')}><Copy size={16} aria-hidden="true" /> Copy setup example</button>
