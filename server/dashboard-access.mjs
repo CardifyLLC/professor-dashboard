@@ -49,7 +49,13 @@ function createAccess({ createClient, env, fetchImpl }) {
     if (!env.VITE_SUPABASE_URL || !env.VITE_SUPABASE_ANON_KEY) throw new HttpError(503, 'Dashboard authentication is not configured.');
     const config = options(fetchImpl); config.global.headers = { Authorization: 'Bearer ' + token };
     const client = createClient(env.VITE_SUPABASE_URL, env.VITE_SUPABASE_ANON_KEY, config);
-    const { data, error } = await client.auth.getUser(token);
+    let verified;
+    try { verified = await client.auth.getUser(token); }
+    catch { throw new HttpError(503, 'Sign-in verification is temporarily unavailable. Please try again.'); }
+    const { data, error } = verified;
+    if (error && ![400, 401, 403, 422].includes(Number(error.status))) {
+      throw new HttpError(503, 'Sign-in verification is temporarily unavailable. Please try again.');
+    }
     if (error || !data?.user?.id) throw new HttpError(401, 'Your session has expired. Sign in again.');
     const user = data.user;
     // Fresh server-verified identity; never trust a browser email or user_metadata.
