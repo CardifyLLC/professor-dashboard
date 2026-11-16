@@ -6,6 +6,7 @@ import { degrees, PDFDocument, rgb, StandardFonts } from 'pdf-lib';
 import sharp from 'sharp';
 import { downloadOrderImage } from './download-order-image.mjs';
 import { dailyLayoutForOrder, dailySlotPosition } from './regular-order-layout.mjs';
+import { readPdfJobsForOrders } from './order-pdf-queue.mjs';
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -180,7 +181,10 @@ const fetchImage = async urls => {
           .jpeg({ quality: IMAGE_QUALITY })
           .toBuffer();
       } catch (error) {
-        throw new MissingImageCandidateError(`invalid or corrupted image from ${url}: ${error.message}`);
+        // A decoder/resize failure is not proof that the customer's file is
+        // missing: unsupported formats and renderer resource limits also fail.
+        // Keep this an operational failure rather than requesting a re-upload.
+        throw new Error(`image processing failed for ${url}: ${error.message}`);
       }
     } catch (error) {
       lastError = error;
@@ -268,18 +272,6 @@ const updateJob = async (orderId, changes) => {
   if (error) throw error;
 };
 
-const notifyCustomerRepairRequired = async orderId => {
-  if (!ORDER_PDF_WEBHOOK_SECRET) {
-    console.warn('Customer repair email skipped: ORDER_PDF_WEBHOOK_SECRET is not configured.');
-    return;
-  }
-  const response = await fetch(`${CUSTOMER_APP_URL}/api/internal/order-image-failure`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'x-webhook-secret': ORDER_PDF_WEBHOOK_SECRET },
-    body: JSON.stringify({ orderId }),
-  });
-  if (!response.ok) throw new Error(`Customer repair notification returned HTTP ${response.status}.`);
-};
 
 const backfillMissingJobs = async () => {
   const { data: paidOrders, error: ordersError } = await supabase
@@ -288,9 +280,7 @@ const backfillMissingJobs = async () => {
   if (!paidOrders?.length) return;
   const ids = paidOrders.filter(order=>!isPartnerOrder(order)).map(order => order.id);
   if (!ids.length) return;
-  const { data: existing, error: jobsError } = await supabase
-    .from('order_pdf_generations').select('order_id').in('order_id', ids);
-  if (jobsError) throw jobsError;
+  const existing = await readPdfJobsForOrders(supabase, ids, { select: 'order_id' });
   const existingIds = new Set((existing || []).map(job => job.order_id));
   const missing = ids.filter(id => !existingIds.has(id)).map(order_id => ({ order_id, status: 'processing' }));
   if (missing.length) {
@@ -311,10 +301,7 @@ const findJobs = async () => {
   if (!recentOrders?.length) return [];
   const recentIds = recentOrders.filter(order=>!isPartnerOrder(order)).map(order => order.id);
   if (!recentIds.length) return [];
-  const { data, error } = await supabase.from('order_pdf_generations')
-    .select('*').in('order_id', recentIds)
-    .neq('status', 'completed').lt('attempt_count', MAX_ATTEMPTS);
-  if (error) throw error;
+  const data = await readPdfJobsForOrders(supabase, recentIds, { maxAttempts: MAX_ATTEMPTS });
   const jobsByOrderId = new Map((data || []).map(job => [job.order_id, job]));
   const cutoff = Date.now() - STALE_MS;
   return recentIds
@@ -391,15 +378,18 @@ const processJob = async job => {
     const nextAttemptCount = Number(job.attempt_count || 0) + 1;
     const finalAttemptFailed = nextAttemptCount >= MAX_ATTEMPTS;
     await updateJob(job.order_id, {
-      status: 'failed', error_message: message.slice(0, 1000),
+      status: 'failed', error_message: `${repairRequired && finalAttemptFailed ? '[confirmed-missing-artwork] ' : ''}${message}`.slice(0, 1000),
       repair_required: repairRequired && finalAttemptFailed,
     });
-    if (repairRequired && finalAttemptFailed) {
+    // Only verified missing/empty sources may trigger customer recovery.
+    if (repairRequired && finalAttemptFailed && ORDER_PDF_WEBHOOK_SECRET) {
       try {
-        await notifyCustomerRepairRequired(job.order_id);
-      } catch (notificationError) {
-        console.error(`Could not notify customer for ${job.order_id}: ${notificationError.message}`);
-      }
+        const response = await fetch(`${CUSTOMER_APP_URL}/api/internal/order-image-failure`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json', 'x-webhook-secret': ORDER_PDF_WEBHOOK_SECRET },
+          body: JSON.stringify({ orderId: job.order_id }),
+        });
+        if (!response.ok) throw new Error(`Notification returned HTTP ${response.status}`);
+      } catch (notificationError) { console.error(`Artwork notification failed: ${notificationError.message}`); }
     }
     console.error(`Failed ${job.order_id}: ${message}`);
   }
