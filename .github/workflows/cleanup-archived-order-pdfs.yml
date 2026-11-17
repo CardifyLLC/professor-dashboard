@@ -1,0 +1,29 @@
+name: Clean archived order PDFs
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '35 21 * * *'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: archived-order-pdf-cleanup
+  cancel-in-progress: false
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      CLEANUP_ENVIRONMENT: production
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: '.nvmrc'
+      - name: Remove only PDFs for archived orders
+        run: node scripts/cleanup-archived-order-pdfs.mjs --execute
