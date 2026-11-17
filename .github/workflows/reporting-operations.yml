@@ -8,7 +8,9 @@ on:
         options: [health, scheduled, daily, weekly, ideas]
         default: health
   schedule:
-    - cron: '11,26,41,56 * * * *'
+    # Health runs every 30 minutes. Reports are checked hourly at minute 41.
+    - cron: '11 * * * *'
+    - cron: '41 * * * *'
 permissions:
   contents: read
 concurrency:
@@ -27,14 +29,18 @@ jobs:
         with:
           node-version: '24'
       - name: Run reporting job
+        if: github.event_name != 'schedule' || github.event.schedule == '41 * * * *'
         env:
           JOB_KIND: ${{ inputs.kind || 'scheduled' }}
+          ALERT_URL: ${{ secrets.OPERATIONS_ALERT_WEBHOOK_URL }}
         run: node scripts/reporting-job.mjs "$JOB_KIND"
       - name: Monitor operations
         if: always() && github.event_name == 'schedule'
+        env:
+          ALERT_URL: ${{ secrets.OPERATIONS_ALERT_WEBHOOK_URL }}
         run: node scripts/reporting-job.mjs health
       - name: Generate weekly proposals
-        if: github.event_name == 'schedule' && vars.GROWTH_IDEAS_ENABLED == 'true'
+        if: github.event_name == 'schedule' && github.event.schedule == '41 * * * *' && vars.GROWTH_IDEAS_ENABLED == 'true'
         run: node scripts/reporting-job.mjs ideas
       - name: Independent fallback alert
         if: failure()

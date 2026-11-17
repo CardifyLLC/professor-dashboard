@@ -13,8 +13,13 @@ test('completed and uncertain reports are not regenerated; failed delivery reuse
  const stored={kind:'daily',financials:{period:{start:'2026-11-15T00:00:00.000Z',end:'2026-11-16T00:00:00.000Z'}}};
  const row={delivery_key:`daily:${stored.financials.period.start}:${stored.financials.period.end}:test@example.invalid`,status:'failed',report:stored,send_attempts:1};
  let deliveries=0;
- const input={db:{from:()=>({select(){return this;},async in(){return{data:[row]};},async upsert(){return{};}})},env:{REPORTING_START_DATE:'2026-11-16',REPORT_TEST_RECIPIENTS:'test@example.invalid'},now:new Date('2026-11-16T03:25:00Z'),collect:()=>assert.fail('must reuse recorded figures'),deliver:async({report})=>{assert.deepEqual(report,stored);deliveries++;return[{status:'sent'}];}};
+ const input={db:{from:()=>({select(){return this;},async in(){return{data:[row]};},async upsert(){return{};}})},env:{REPORT_DELIVERY_ENABLED:'true',REPORTING_START_DATE:'2026-11-16',REPORT_TEST_RECIPIENTS:'test@example.invalid'},now:new Date('2026-11-16T03:25:00Z'),collect:()=>assert.fail('must reuse recorded figures'),deliver:async({report})=>{assert.deepEqual(report,stored);deliveries++;return[{status:'sent'}];}};
  await runScheduledReports(input);assert.equal(deliveries,1);
  for(const status of ['sent','uncertain','sending']){row.status=status;await runScheduledReports(input);}
  assert.equal(deliveries,1);
+});
+
+test('paused testing reporting is a successful no-op with no data reads or sends',async()=>{
+ const result=await runScheduledReports({db:{from(){assert.fail('paused reports must not query');}},env:{REPORT_DELIVERY_ENABLED:'false'},collect:()=>assert.fail('must not collect'),deliver:()=>assert.fail('must not send')});
+ assert.equal(result.status,'disabled');assert.deepEqual(result.outcomes,[]);
 });

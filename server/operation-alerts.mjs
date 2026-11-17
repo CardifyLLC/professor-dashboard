@@ -1,16 +1,16 @@
 import production from '../config/reporting.production.json' with { type: 'json' };
 import { operationsEmail } from './report-email.mjs';
 import { readAll } from './report-sources.mjs';
-import { reportRecipients,deliverOnce } from './report-delivery.mjs';
+import { reportRecipients } from './report-delivery.mjs';
+import { criticalOperation,deliverOperationAlert } from './operation-alert-delivery.mjs';
 import { createEnvelopeMailer } from '../supabase/functions/_shared/envelope-mailer.mjs';
-import { createHash } from 'node:crypto';
 export async function monitorOperations({db,env,fetchImpl=fetch,now=new Date(),prepareMailer=()=>createEnvelopeMailer({env:name=>env[name]}).prepare()}) {
   const findings=[];
   const owner=env.OPERATIONS_OWNER||'superiorvideo@gmail.com';
   for(const [name,origin] of [['dashboard',env.DASHBOARD_APP_URL],['storefront',env.CUSTOMER_APP_URL]]){
     let status='ok';
     try{if(!origin||new URL(origin).protocol!=='https:')throw new Error('Missing HTTPS origin');const response=await fetchImpl(new URL('/api/reporting-health',origin),{redirect:'error',signal:AbortSignal.timeout(15000)});if(!response.ok||(await response.json()).ok!==true)throw new Error('Health failed');}catch{status='failed';}
-    const saved=await db.from('operation_health').upsert({id:name,status,checked_at:now.toISOString(),max_age_minutes:45,owner,detail:status==='ok'?'Application health route responded':'Health endpoint unavailable or misconfigured'});
+    const saved=await db.from('operation_health').upsert({id:name,status,checked_at:now.toISOString(),max_age_minutes:90,owner,detail:status==='ok'?'Application health route responded':'Health endpoint unavailable or misconfigured'});
     if(saved.error)throw new Error('Health persistence failed');
   }
   const source=async(name,load)=>{try{return await load();}catch{findings.push({key:'source:'+name,issue:`Monitoring source unavailable: ${name}`,next:'Check database migrations, permissions and source availability'});return[];}};
@@ -26,7 +26,12 @@ export async function monitorOperations({db,env,fetchImpl=fetch,now=new Date(),p
   for(const job of jobs.filter(j=>j.status==='failed'))findings.push({key:'pdf:'+job.order_id,order_id:job.order_id,issue:'Order PDF generation failed',next:'Inspect worker logs and retry the PDF after correction'});
   const threshold=Number(env.REPORT_AGED_ORDER_HOURS)||72;
   for(const order of orders.filter(o=>!o.archived_at&&['paid','processing','printing'].includes(o.status)&&now-Date.parse(o.created_at)>threshold*3600000))findings.push({key:'aged:'+order.id,order_id:order.id,issue:`Order older than ${threshold} hours`,next:'Check backlog, production capacity and customer update'});
-  for(const h of health.filter(h=>h.status!=='ok'||now-Date.parse(h.checked_at)>h.max_age_minutes*60000))findings.push({key:'health:'+h.id,issue:`Health failure or stale heartbeat: ${h.id}`,next:'Inspect service and workflow logs; verify recovery'});
+  for(const h of health.filter(h=>{
+    if(h.id==='report-scheduler'&&env.REPORT_DELIVERY_ENABLED!=='true')return false;
+    if(h.id==='feedback-scheduler'&&env.FEEDBACK_AUTOMATION_ENABLED!=='true')return false;
+    const maxAge=h.id==='report-scheduler'?120:['operations-monitor','dashboard','storefront'].includes(h.id)?90:h.max_age_minutes;
+    return h.status!=='ok'||now-Date.parse(h.checked_at)>maxAge*60000;
+  }))findings.push({key:'health:'+h.id,issue:`Health failure or stale heartbeat: ${h.id}`,next:'Inspect service and workflow logs; verify recovery'});
   for(const s of shipments.filter(s=>['failed','unknown'].includes(s.status)||(s.status==='sending'&&now-Date.parse(s.created_at)>30*60000)))findings.push({key:'shipping:'+s.id,order_id:s.order_id,issue:'Shipping notification needs review',next:'Check Gmail acceptance before retrying the customer notification'});
   // Alert delivery failures use the independent GitHub webhook fallback. Never recursively email an alert about a failed alert.
   for(const d of deliveries.filter(d=>!d.delivery_key.startsWith('alert:')&&(['failed','uncertain'].includes(d.status)||(d.status==='sending'&&now-Date.parse(d.updated_at||d.created_at)>30*60000))))findings.push({key:'delivery:'+d.id,issue:'Report delivery needs review',next:'Check mail provider and durable delivery state before resending'});
@@ -37,24 +42,34 @@ export async function monitorOperations({db,env,fetchImpl=fetch,now=new Date(),p
   for(const i of feedback.filter(i=>['failed','uncertain'].includes(i.status)||(['pending','sending'].includes(i.status)&&now-Date.parse(i.updated_at)>30*60000)))findings.push({key:'feedback:'+i.id,order_id:i.order_id,issue:'Feedback invitation needs review: '+i.status,next:'Check campaign caps, signing secrets, and provider receipt; do not retry uncertain sends until reconciled'});
   for(const run of generation.filter(r=>r.status==='failed'||(r.status==='running'&&now-Date.parse(r.updated_at)>30*60000)))findings.push({key:'generation:'+run.id,issue:'Growth proposal generation needs review',next:'Inspect provider configuration and saved generation state; proposals never execute actions'});
   const outcomes=[],items=[];
-  const recipients=reportRecipients(env);
   for(const finding of findings){
     const saved=await db.rpc('open_operation_exception',{p_key:finding.key,p_order:finding.order_id||null,p_issue:finding.issue,p_owner:owner,p_next:finding.next});
     if(saved.error)throw new Error('Exception queue unavailable');
     const item=saved.data;
-    items.push(item);
+    if(criticalOperation(finding.key))items.push(item);
     if(env.OPERATION_ALERTS_ENABLED!=='true'){outcomes.push({id:item.id,status:'queued_delivery_disabled'});continue;}
   }
-  // One digest per changed incident set, never hundreds of messages when a
-  // monitor is first enabled. Unchanged failures reuse their delivery keys.
+  // Routine items stay in the daily report. Only new critical incident versions
+  // get an email, with database-enforced reservations capped at two per 24h.
+  let webhook;
   if(env.OPERATION_ALERTS_ENABLED==='true'&&items.length){
-    const fingerprint=createHash('sha256').update(items.map(i=>`${i.id}:${i.version}`).sort().join('|')).digest('hex');
+    const recipients=reportRecipients(env),overflow=new Map();
     let mailer;
     const sendEmail=async(...args)=>{try{mailer ||= await prepareMailer();}catch(error){error.definitelyRejected=true;throw error;}return mailer.send(...args);};
     const emailOptions={testing:(env.SUPABASE_URL||env.VITE_SUPABASE_URL)!=='https://'+production.supabase_project_id+'.supabase.co',dashboardUrl:env.DASHBOARD_APP_URL,owner,now:now.toISOString()};
-    for(const recipient of recipients)outcomes.push(await deliverOnce({db,key:`alert:digest:${fingerprint}:${recipient}`,recipient,report:{exceptions:items},messageForReport:stored=>operationsEmail(stored.exceptions,emailOptions),sendEmail,now}));
+    for(const recipient of recipients){
+      const result=await deliverOperationAlert({db,recipient,items,messageForReport:stored=>operationsEmail(stored.exceptions,emailOptions),sendEmail,now});
+      if(result.status==='daily_limit')for(const item of result.exceptions||[])overflow.set(item.id+':'+item.version,item);
+      const {exceptions,...summary}=result;outcomes.push(summary);
+    }
+    if(overflow.size){
+      const claimed=await db.rpc('claim_operation_alert_webhook',{p_items:[...overflow.values()]});
+      if(claimed.error)throw new Error('Overflow notification reservation failed');
+      if(claimed.data?.status==='claimed')webhook={id:claimed.data.id,count:claimed.data.count};
+      else if(claimed.data?.status==='retry_limit')throw new Error('Overflow notification needs delivery review');
+    }
   }
-  const heartbeat=await db.from('operation_health').upsert({id:'operations-monitor',status:'ok',checked_at:now.toISOString(),max_age_minutes:45,owner,detail:'Operations scan completed'});
+  const heartbeat=await db.from('operation_health').upsert({id:'operations-monitor',status:'ok',checked_at:now.toISOString(),max_age_minutes:90,owner,detail:'Operations scan completed'});
   if(heartbeat.error)throw new Error('Monitor heartbeat failed');
-  return{findings:findings.length,outcomes};
+  return{findings:findings.length,critical:items.length,outcomes,...(webhook?{webhook}:{})};
 }

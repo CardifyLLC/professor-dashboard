@@ -137,6 +137,12 @@ export function reportEmail(report, options = {}) {
     'Open action-list items: ' + count(size(operations.exceptions)) + '. These can overlap with the counts above. Current status as of the update time.',
   ]));
   const p = f.prints;
+  const reminders=operationGroups(operations.exceptions);
+  if(reminders.length)sections.push(section('Open issues and reminders',reminders.slice(0,MAX_ROWS).map(g=>[g.label,count(g.count)]),[
+    ...reminders.slice(0,MAX_ROWS).map(g=>g.label+': '+g.next),
+    'Unresolved issues stay in this daily or weekly summary. Routine issues do not trigger separate alert emails.',
+    'Critical alert emails are limited to two per person in any 24 hours. Further critical updates go to Discord and the dashboard.',
+  ]));
   sections.push(section('PRINTS activity',[
     ['Purchased',count(p?.purchased)],['Used on orders',count(p?.redeemed)],
     ['Returned to customers',count(p?.redemption_reversed)],['Awarded for feedback',count(p?.feedback_awarded)],
@@ -200,7 +206,7 @@ const alertTypes = [
   [/^generation:/,'AI suggestions need review','Ask the technical team to check the idea-generation service.'],
   [/^source:/,'Monitoring data is unavailable','Ask the technical team to restore the missing data source.'],
 ];
-export function operationsEmail(items, options = {}) {
+function operationGroups(items) {
   const groups = new Map();
   for (const item of list(items)) {
     const key = item.source_key || item.id || '';
@@ -209,10 +215,13 @@ export function operationsEmail(items, options = {}) {
     const entry = groups.get(label) || {label,count:0,next:type?.[2] || 'Review these items and their next steps in the dashboard.'};
     entry.count++; groups.set(label,entry);
   }
-  const groupsShown = [...groups.values()].sort((a,b) => b.count - a.count).slice(0,MAX_ROWS);
+  return [...groups.values()].sort((a,b)=>b.count-a.count);
+}
+export function operationsEmail(items, options = {}) {
+  const groups=operationGroups(items),groupsShown=groups.slice(0,MAX_ROWS);
   const sections = [section('Action summary',groupsShown.map(g => [g.label,count(g.count)]),[
     ...groupsShown.map(g => g.label + ': ' + g.next),
-    groups.size > MAX_ROWS ? 'More issue categories are listed in the dashboard.' : '',
+    groups.length > MAX_ROWS ? 'More issue categories are listed in the dashboard.' : '',
     'Counts are issues, not unique orders. An order may appear in more than one category.',
   ])];
   const owners = [...new Set(list(items).map(i => clean(i.owner,100) || clean(options.owner,100)).filter(Boolean))];
@@ -224,6 +233,6 @@ export function operationsEmail(items, options = {}) {
     subject:(options.testing ? '[TEST] ' : '') + 'TCGPlaytest — ' + count(size(items)) + ' operations items need attention',
     ...renderEmail({title:'Operations need attention',period:updated(options.now),options,sections,
       notice:count(size(items)) + ' open issues were found. They are grouped below so you can see what needs attention without reading every order record.',
-      footer:'This shows the issues found at the time above. Full order details and action history are available in the dashboard.'}),
+      footer:'These are new critical issues. Alert emails are limited to two per person in any 24 hours. Unresolved issues remain in the daily report; further critical updates go to Discord and the dashboard.'}),
   };
 }

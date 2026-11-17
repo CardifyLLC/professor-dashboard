@@ -6,6 +6,7 @@ import { monitorOperations } from '../server/operation-alerts.mjs';
 import { runScheduledReports } from '../server/report-schedule.mjs';
 import { generateGrowthIdeas } from '../server/growth-ideas.mjs';
 import { METRIC_VERSION } from '../server/business-metrics.mjs';
+import { finishOperationWebhook,operationDeliveryFailed } from '../server/operation-alert-delivery.mjs';
 export default async function handler(req,res){
   res.setHeader('Cache-Control','no-store');
   if(req.method!=='POST')return res.status(405).json({error:'POST required'});
@@ -14,6 +15,10 @@ export default async function handler(req,res){
   try{
     const db=createClient(process.env.SUPABASE_URL||process.env.VITE_SUPABASE_URL,process.env.SUPABASE_SERVICE_ROLE_KEY,{auth:{persistSession:false,autoRefreshToken:false}});
     const params=new URL(req.url,'https://internal.invalid').searchParams;
+    if(params.get('kind')==='webhook-result'){
+      return res.status(200).json(await finishOperationWebhook(db,typeof req.body==='string'?JSON.parse(req.body):req.body));
+    }
+    if(['scheduled','daily','weekly'].includes(params.get('kind'))&&process.env.REPORT_DELIVERY_ENABLED!=='true')return res.status(200).json({status:'disabled',outcomes:[]});
     if(params.get('kind')==='ideas'){
       if(process.env.GROWTH_IDEAS_ENABLED!=='true')return res.status(200).json({status:'disabled'});
       const now=new Date(),end=new Date(now);end.setUTCHours(0,0,0,0);end.setUTCDate(end.getUTCDate()-(end.getUTCDay()+6)%7);
@@ -31,7 +36,7 @@ export default async function handler(req,res){
     }
     if(params.get('kind')==='health'){
       const result=await monitorOperations({db,env:process.env});
-      return res.status(result.outcomes.some(o=>o.status!=='sent')?503:200).json(result);
+      return res.status(result.outcomes.some(operationDeliveryFailed)?503:200).json(result);
     }
     const window=reportWindow(params);
     if(window.kind==='range')return res.status(400).json({error:'Scheduled reports must be daily or weekly'});
