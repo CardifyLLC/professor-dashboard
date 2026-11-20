@@ -39,7 +39,7 @@ export async function feedbackEligibility(db,campaignId,env){
   if(campaignResult.error||!campaignResult.data)throw new Error('Campaign unavailable');
   const campaign=campaignResult.data;
   const [orders,profiles,subscribers,invitations]=await Promise.all([
-    readAll(db,'orders'),readAll(db,'profiles','id,email'),
+    readAll(db,'orders','id,user_id,customer_email,payment_status,status,refunded_at,created_at,completed_at,metadata'),readAll(db,'profiles','id,email'),
     readAll(db,'marketing_subscribers','email,status,consented_at,consent_text',q=>q,'email'),
     readAll(db,'feedback_invitations','id,campaign_id,order_id,user_id,status,created_at,send_attempts,expires_at'),
   ]);

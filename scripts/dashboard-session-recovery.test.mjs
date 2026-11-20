@@ -99,3 +99,37 @@ test('server rejects unsigned requests and thrown upstream failures without gran
   await assert.rejects(access.authenticate({ headers: {} }), error => error.status === 401);
   await assert.rejects(access.authenticate({ headers: { authorization: 'Bearer fixture' } }), error => error.status === 503);
 });
+
+test('a transient read failure retries once without refreshing or clearing the session', async () => {
+  const f = fixture({ responses: [503, 200] });
+  assert.deepEqual(await f.request(), { role: 'admin' });
+  assert.equal(f.calls.length, 2); assert.equal(f.counts.refreshes, 0);
+});
+
+test('persistent read outages stop after one retry', async () => {
+  const f = fixture({ responses: [503] });
+  await assert.rejects(f.request(), error => error.status === 503);
+  assert.equal(f.calls.length, 2); assert.equal(f.counts.refreshes, 0);
+});
+
+test('network read errors recover once, but writes are never replayed', async () => {
+  for (const body of [undefined, { action: 'revoke' }]) {
+    let calls = 0;
+    const request = createDashboardAccessRequest({
+      auth: { getSession: async () => ({ data: { session: oldSession } }) }, apiKey: 'anon', wait: async () => {},
+      fetchImpl: async () => { if (++calls === 1) throw new TypeError('network unavailable'); return Response.json({ role: 'admin' }); },
+    });
+    if (body) { await assert.rejects(request(undefined, body), /network unavailable/); assert.equal(calls, 1); }
+    else { assert.deepEqual(await request(), { role: 'admin' }); assert.equal(calls, 2); }
+  }
+});
+
+test('switching accounts during a transient retry stops before replaying the read', async () => {
+  let current = oldSession, calls = 0;
+  const request = createDashboardAccessRequest({
+    auth: { getSession: async () => ({ data: { session: current } }) }, apiKey: 'anon',
+    wait: async () => { current = { access_token: 'other', user: { id: 'other' } }; },
+    fetchImpl: async () => { calls++; return Response.json({ error: 'unavailable' }, { status: 503 }); },
+  });
+  await assert.rejects(request(), error => error.status === 401); assert.equal(calls, 1);
+});

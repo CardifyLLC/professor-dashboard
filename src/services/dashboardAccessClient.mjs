@@ -5,7 +5,7 @@ function authFailure(error) {
     : Object.assign(new Error('Sign-in verification is temporarily unavailable. Please try again.'), { status: 503 });
 }
 
-export function createDashboardAccessRequest({ auth, apiKey, fetchImpl = fetch }) {
+export function createDashboardAccessRequest({ auth, apiKey, fetchImpl = fetch, wait = ms => new Promise(resolve => setTimeout(resolve, ms)) }) {
   let refreshing;
   const session = async () => {
     const { data, error } = await auth.getSession();
@@ -35,14 +35,34 @@ export function createDashboardAccessRequest({ auth, apiKey, fetchImpl = fetch }
   return async function dashboardAccessRequest(path = '/api/dashboard-access?mode=session', body, signal) {
     let current = await session();
     const requestSignal = signal || AbortSignal.timeout(30000);
+    let transientRetried = false;
     for (let attempt = 0; attempt < 2; attempt++) {
       requestSignal.throwIfAborted();
-      const response = await fetchImpl(path, {
+      const send = () => fetchImpl(path, {
         method: body ? 'POST' : 'GET',
         headers: { apikey: apiKey, Authorization: `Bearer ${current.access_token}`, 'Content-Type': 'application/json' },
         ...(body ? { body: JSON.stringify(body) } : {}),
         cache: 'no-store', credentials: 'omit', signal: requestSignal,
       });
+      let response;
+      for (;;) {
+        let networkError;
+        try { response = await send(); } catch (error) { networkError = error; }
+        const temporary = networkError || [502, 503, 504, 520, 521, 522, 523, 524, 525].includes(response?.status);
+        if (!temporary || body || transientRetried || requestSignal.aborted) {
+          if (networkError) throw networkError;
+          break;
+        }
+        // One bounded retry for reads only. Never replay a write after an
+        // uncertain response or bypass a confirmed authentication failure.
+        transientRetried = true;
+        await response?.body?.cancel();
+        await wait(400);
+        requestSignal.throwIfAborted();
+        const latest = await session();
+        if (latest.user?.id !== current.user?.id) throw expired();
+        current = latest;
+      }
       const data = await response.json().catch(() => null);
       if (response.status === 401 && attempt === 0) {
         requestSignal.throwIfAborted();
