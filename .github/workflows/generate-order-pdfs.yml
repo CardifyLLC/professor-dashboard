@@ -32,6 +32,8 @@ jobs:
       GITHUB_REPOSITORY_NAME: ${{ github.repository }}
       CUSTOMER_APP_URL: ${{ vars.CUSTOMER_APP_URL || 'https://tcgplaytest.com' }}
       ORDER_PDF_WEBHOOK_SECRET: ${{ secrets.ORDER_PDF_WEBHOOK_SECRET }}
+      PARTNER_PLATFORM_ORIGIN: ${{ secrets.PARTNER_PLATFORM_ORIGIN }}
+      PARTNER_INTERNAL_SECRET: ${{ secrets.PARTNER_INTERNAL_SECRET }}
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
