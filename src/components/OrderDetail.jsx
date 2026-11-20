@@ -33,7 +33,8 @@ const OrderDetail = ({ order, onClose, onOrderUpdated }) => {
     const [isDownloadingOrderPdf, setIsDownloadingOrderPdf] = useState(false);
 
     useEffect(() => {
-        if (partnerOrder) { setIsLoadingOrderPdf(false); return; }
+        setOrderPdf(null);
+        setIsLoadingOrderPdf(true);
         let active = true;
         let pollTimer;
         const loadOrderPdf = async () => {
@@ -41,7 +42,7 @@ const OrderDetail = ({ order, onClose, onOrderUpdated }) => {
                 const generation = await fetchOrderPdfGeneration(order.id);
                 if (active) {
                     setOrderPdf(generation);
-                    if (generation?.status === 'processing') {
+                    if (generation?.status === 'processing' || (!generation && String(order.status).toLowerCase() === 'paid')) {
                         pollTimer = window.setTimeout(loadOrderPdf, 3000);
                     }
                 }
@@ -56,7 +57,7 @@ const OrderDetail = ({ order, onClose, onOrderUpdated }) => {
             active = false;
             if (pollTimer) window.clearTimeout(pollTimer);
         };
-    }, [order.id, partnerOrder]);
+    }, [order.id, order.status]);
 
     const shippingAddress = parseAddress(order.shipping_address);
     // Parse card_images if it's a string, otherwise use as is
@@ -531,7 +532,7 @@ const OrderDetail = ({ order, onClose, onOrderUpdated }) => {
                         )}
                         {!isLoadingOrderPdf && orderPdf?.status === 'processing' && (
                             <span style={{ color: 'var(--text-muted)', fontSize: '0.8rem', whiteSpace: 'nowrap' }}>
-                                PDF processing{orderPdf.total_cards > 0
+                                {orderPdf.error_message?.startsWith('[partner-artwork-pending]') ? 'Waiting for artwork' : 'PDF processing'}{!orderPdf.error_message?.startsWith('[partner-artwork-pending]') && orderPdf.total_cards > 0
                                     ? `… ${orderPdf.processed_cards}/${orderPdf.total_cards}`
                                     : '…'}
                             </span>
