@@ -73,14 +73,15 @@ const OrderList = ({ orders, onSelectOrder, page, setPage, totalCount, pageSize,
     useEffect(() => {
         let active = true;
         let timer;
-        const orderIds = orders.filter(order => !isPartnerOrder(order)).map(order => order.id);
+        const orderIds = orders.map(order => order.id);
 
         const loadPdfStatuses = async () => {
             try {
                 const generations = await fetchOrderPdfGenerations(orderIds);
                 if (!active) return;
                 setPdfGenerations(Object.fromEntries(generations.map(item => [item.order_id, item])));
-                if (generations.some(item => item.status === 'processing')) {
+                if (generations.some(item => item.status === 'processing') || orders.some(order =>
+                    String(order.status).toLowerCase() === 'paid' && !generations.some(item => item.order_id === order.id))) {
                     timer = window.setTimeout(loadPdfStatuses, 3000);
                 }
             } catch (error) {
@@ -422,9 +423,7 @@ const OrderList = ({ orders, onSelectOrder, page, setPage, totalCount, pageSize,
                                 )}
                             </td>
                             <td>
-                                {isPartnerOrder(order) ? (
-                                    <span className="pdf-status-badge">Print in BatcherPRO</span>
-                                ) : !pdfGeneration ? (
+                                {!pdfGeneration ? (
                                     <span className="pdf-status-badge pdf-status-none">Not generated</span>
                                 ) : pdfGeneration.status === 'completed' ? (
                                     <span className="pdf-status-badge pdf-status-ready"
@@ -435,7 +434,9 @@ const OrderList = ({ orders, onSelectOrder, page, setPage, totalCount, pageSize,
                                 ) : pdfGeneration.status === 'processing' ? (
                                     <span className="pdf-status-badge pdf-status-processing">
                                         <span className="pdf-status-dot" />
-                                        {pdfGeneration.total_cards > 0
+                                        {pdfGeneration.error_message?.startsWith('[partner-artwork-pending]')
+                                            ? 'Waiting for artwork'
+                                            : pdfGeneration.total_cards > 0
                                             ? `${pdfGeneration.processed_cards}/${pdfGeneration.total_cards}`
                                             : 'Generating'}
                                     </span>
