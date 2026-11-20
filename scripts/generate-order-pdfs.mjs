@@ -1,6 +1,7 @@
 import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
 import { resolve, join } from 'node:path';
-import { isPartnerOrder } from '../src/services/partnerArtwork.mjs';
+import { isPartnerImage, isPartnerOrder } from '../src/services/partnerArtwork.mjs';
+import { createPartnerPdfArtworkClient, PartnerArtworkPendingError, PARTNER_ARTWORK_WAIT_PREFIX, partnerPdfRetryReady } from './partner-order-pdf.mjs';
 import { createClient } from '@supabase/supabase-js';
 import { degrees, PDFDocument, rgb, StandardFonts } from 'pdf-lib';
 import sharp from 'sharp';
@@ -26,6 +27,7 @@ const IMAGE_QUALITY = 50;
 
 class MissingImageCandidateError extends Error {}
 class MissingOrderImageError extends Error {}
+const partnerArtwork = createPartnerPdfArtworkClient();
 
 const mode = process.argv[2];
 if (mode && !['--sample', '--stage-order'].includes(mode)) throw new Error('Unknown worker option');
@@ -85,6 +87,7 @@ const positiveInteger = (value, fallback = 1) => {
 const imageCandidates = (value) => {
   const path = typeof value === 'string' ? value.trim() : '';
   if (!path) return [];
+  if (isPartnerImage(path)) return [path];
   if (path.startsWith('data:')) return [path];
   if (/^https?:\/\//i.test(path)) return [path];
   const normalized = path
@@ -163,6 +166,8 @@ const fetchImage = async urls => {
         const match = url.match(/^data:[^;,]+;base64,(.+)$/s);
         if (!match) throw new MissingImageCandidateError('invalid inline image data');
         bytes = Buffer.from(match[1], 'base64');
+      } else if (isPartnerImage(url)) {
+        bytes = await partnerArtwork.download(url);
       } else {
         const response = await downloadOrderImage(url, {
           apikey: SUPABASE_SERVICE_ROLE_KEY, Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
@@ -278,7 +283,7 @@ const backfillMissingJobs = async () => {
     .from('orders').select('id,metadata').ilike('status', 'paid').order('created_at', { ascending: true }).limit(1000);
   if (ordersError) throw ordersError;
   if (!paidOrders?.length) return;
-  const ids = paidOrders.filter(order=>!isPartnerOrder(order)).map(order => order.id);
+  const ids = paidOrders.map(order => order.id);
   if (!ids.length) return;
   const existing = await readPdfJobsForOrders(supabase, ids, { select: 'order_id' });
   const existingIds = new Set((existing || []).map(job => job.order_id));
@@ -299,14 +304,14 @@ const findJobs = async () => {
     .order('created_at', { ascending: false }).limit(1000);
   if (ordersError) throw ordersError;
   if (!recentOrders?.length) return [];
-  const recentIds = recentOrders.filter(order=>!isPartnerOrder(order)).map(order => order.id);
+  const recentIds = recentOrders.map(order => order.id);
   if (!recentIds.length) return [];
   const data = await readPdfJobsForOrders(supabase, recentIds, { maxAttempts: MAX_ATTEMPTS });
   const jobsByOrderId = new Map((data || []).map(job => [job.order_id, job]));
   const cutoff = Date.now() - STALE_MS;
   return recentIds
     .map(orderId => jobsByOrderId.get(orderId))
-    .filter(job => job && (
+    .filter(job => job && partnerPdfRetryReady(job) && (
       job.status === 'failed' || !job.started_at || new Date(job.started_at).getTime() < cutoff || Number(job.processed_cards || 0) === 0
     ))
     .slice(0, MAX_ORDERS);
@@ -333,8 +338,9 @@ const processJob = async job => {
     attempt_count: Number(job.attempt_count || 0) + 1,
   });
   try {
-    const { data: order, error } = await supabase.from('orders').select('*').eq('id', job.order_id).single();
+    const { data: storedOrder, error } = await supabase.from('orders').select('*').eq('id', job.order_id).single();
     if (error) throw error;
+    const order = await partnerArtwork.prepareOrder(storedOrder);
     if (String(order.status || '').toLowerCase() !== 'paid') throw new Error('Order is no longer paid.');
     const cards = cardsFromOrder(order);
     if (!cards.length) throw new Error('Order has no printable cards.');
@@ -373,6 +379,16 @@ const processJob = async job => {
     });
     console.log(`Completed ${order.id}.`);
   } catch (error) {
+    if (error instanceof PartnerArtworkPendingError) {
+      await updateJob(job.order_id, {
+        status: 'processing', started_at: startedAt, processed_cards: 0,
+        attempt_count: Number(job.attempt_count || 0),
+        error_message: `${PARTNER_ARTWORK_WAIT_PREFIX} ${error.message}`,
+        repair_required: false,
+      });
+      console.log(`Waiting for partner artwork for ${job.order_id}.`);
+      return;
+    }
     const message = error instanceof Error ? error.message : String(error);
     const repairRequired = error instanceof MissingOrderImageError;
     const nextAttemptCount = Number(job.attempt_count || 0) + 1;
@@ -438,7 +454,7 @@ if (mode === '--sample') {
   if (job.status !== 'completed') throw new Error('Only completed orders can be staged');
   const { data: order, error } = await supabase.from('orders').select('*').eq('id', id).single();
   if (error) throw error;
-  if (isPartnerOrder(order)) throw new Error('Partner orders use a separate print workflow');
+  if (isPartnerOrder(order)) throw new Error('Staging completed partner PDFs requires a separately approved partner reprint.');
   const cards = cardsFromOrder(order);
   if (!cards.length) throw new Error('No printable cards');
   const root = resolve('staged-order-pdfs');

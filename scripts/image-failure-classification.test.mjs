@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
+import { isPartnerImage } from '../src/services/partnerArtwork.mjs';
 
 const source = readFileSync(new URL('./generate-order-pdfs.mjs', import.meta.url), 'utf8');
 const start = source.indexOf('const fetchImage =');
@@ -10,7 +11,8 @@ function loader(response, processingError) {
   const sharp = () => ({ resize() { return this; }, flatten() { return this; }, jpeg() { return this; }, async toBuffer() { if (processingError) throw processingError; return Buffer.from('rendered'); } });
   sharp.kernel = { lanczos3: 'lanczos3' };
   return vm.runInNewContext(`class MissingImageCandidateError extends Error {}\nclass MissingOrderImageError extends Error {}\n${body}\n({fetchImage, MissingOrderImageError})`, {
-    Buffer, sharp, downloadOrderImage: async () => response,
+    Buffer, sharp, isPartnerImage, downloadOrderImage: async () => response,
+    partnerArtwork: { download: async () => { throw new Error('Partner artwork download failed; retry the PDF job.'); } },
     SUPABASE_SERVICE_ROLE_KEY: 'fixture', IMAGE_WIDTH: 10, IMAGE_HEIGHT: 10, IMAGE_QUALITY: 50,
   });
 }
@@ -21,7 +23,7 @@ test('renderer failures must not ask customers to replace existing artwork', asy
 test('confirmed missing and empty objects still require artwork recovery', async () => {
   for (const response of [{ok:false,status:404}, {ok:true,status:200,bytes:Buffer.alloc(0)}]) {
     const {fetchImage, MissingOrderImageError} = loader(response);
-    await assert.rejects(fetchImage(['https://example.com/image']), MissingOrderImageError);
+    await assert.rejects(fetchImage(['https://example.com/image']), error => error instanceof MissingOrderImageError);
   }
 });
 test('storage outages are operational failures and valid images render', async () => {
@@ -29,4 +31,10 @@ test('storage outages are operational failures and valid images render', async (
   await assert.rejects(failed.fetchImage(['https://example.com/image']), error => !(error instanceof failed.MissingOrderImageError));
   const valid = loader({ok:true,status:200,bytes:Buffer.from('existing')});
   assert.equal((await valid.fetchImage(['https://example.com/image'])).toString(), 'rendered');
+});
+
+test('partner file failures never request customer artwork recovery', async () => {
+  const { fetchImage, MissingOrderImageError } = loader({ ok: false, status: 404 });
+  await assert.rejects(fetchImage(['partner-artwork:00000000-0000-4000-a000-000000000001/00000000-0000-4000-a000-000000000002']),
+    error => !(error instanceof MissingOrderImageError) && /Partner artwork download failed/.test(error.message));
 });
