@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import AcquisitionExport from './AcquisitionExport';
 import { parseAddress } from '../services/orderService';
 import { getAdminAuthHeaders } from '../services/supabaseClient';
 
@@ -137,6 +138,7 @@ const Customers = ({ orders }) => {
                     New users: {newUserCount === null ? '—' : newUserCount.toLocaleString()}
                 </span>
             </div>
+            <AcquisitionExport />
             <div className="data-table-container">
                 <table className="data-table">
                     <thead>
