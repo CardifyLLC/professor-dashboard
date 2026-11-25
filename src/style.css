@@ -1597,3 +1597,51 @@ body.modal-open {
     transition: none !important;
   }
 }
+
+/* Partner/API prepaid credits, separate from customer wallet PRINTS. */
+.api-print-credits-summary {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 5px;
+    margin-top: 8px;
+    max-width: 220px;
+    font-size: 12px;
+    line-height: 1.4;
+}
+.api-print-credits-badge {
+    display: inline-block;
+    border: 1px solid #0f766e;
+    border-radius: 6px;
+    padding: 3px 7px;
+    background: #113b3b;
+    color: #99f6e4;
+    font-weight: 700;
+    white-space: nowrap;
+}
+.api-print-credits-detail {
+    margin-top: 18px;
+    padding: 14px;
+    border: 1px solid #0f766e;
+    border-radius: 8px;
+    background: var(--bg-secondary);
+}
+.api-print-credits-detail h4 { margin: 0 0 6px; }
+.api-print-credits-detail p { margin: 6px 0; }
+.api-print-credits-detail dl { margin: 12px 0 0; }
+.api-print-credits-detail dl > div {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    gap: 4px 12px;
+    margin-top: 8px;
+}
+.api-print-credits-detail dt,
+.api-print-credits-note { color: var(--text-secondary, #b0bed0); }
+.api-print-credits-detail dd {
+    margin: 0;
+    font-weight: 600;
+    overflow-wrap: anywhere;
+    min-width: 0;
+}
+
