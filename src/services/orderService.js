@@ -27,8 +27,8 @@ export const awardCashPurchaseReward = async (orderId) => {
 export const ORDER_STATUSES = ['pending', 'paid', 'processing', 'shipped', 'completed', 'cancelled'];
 
 /**
- * Fetches all orders from the 'orders' table.
- * Used for Analytics and Customers views where full dataset is needed.
+ * Fetches lightweight order summaries for Customers, Analytics, and Order Map.
+ * Artwork, XML, and metadata are fetched separately when an order is opened.
  * @returns {Promise<Array>} List of orders
  */
 export const fetchAllOrders = async () => {
@@ -39,8 +39,9 @@ export const fetchAllOrders = async () => {
     while (true) {
         const { data, error } = await ordersClient
             .from('orders')
-            .select('*')
+            .select('id, customer_name, customer_email, customer_phone, created_at, status, payment_status, total_amount_cents, quantity, shipping_address, refund_reason_key')
             .order('created_at', { ascending: false })
+            .order('id', { ascending: false })
             .range(from, from + pageSize - 1);
 
         if (error) {
@@ -316,7 +317,7 @@ export const fetchOrders = async (page = 1, pageSize = 20, searchTerm = '', stat
 
     let query = ordersClient
         .from('orders')
-        .select('id, customer_name, customer_email, created_at, status, payment_status, total_amount_cents, quantity, shipping_address, metadata, uploaded_xml_filename, uploaded_xml_content, envelope_shipped_at, envelope_email_status', { count: 'exact' });
+        .select('id, customer_name, customer_email, created_at, status, payment_status, payment_source, payment_provider, pricing_snapshot, refunded_at, total_amount_cents, quantity, shipping_address, metadata, uploaded_xml_filename, uploaded_xml_content, envelope_shipped_at, envelope_email_status', { count: 'exact' });
 
     if (searchTerm) {
         query = query.or(`customer_name.ilike.%${searchTerm}%,customer_email.ilike.%${searchTerm}%`);
