@@ -1,4 +1,5 @@
 import { isPartnerOrder } from '../services/partnerArtwork.mjs';
+import ApiPrintCredits from './ApiPrintCredits';
 import EnvelopeShipmentButton from './EnvelopeShipmentButton';
 import React, { useState, useEffect } from 'react';
 import { Download, TriangleAlert } from 'lucide-react';
@@ -413,7 +414,10 @@ const OrderList = ({ orders, onSelectOrder, page, setPage, totalCount, pageSize,
                                     {order.status}
                                 </span>
                             </td>
-                            <td>{formatCurrency(order.total_amount_cents)}</td>
+                            <td>
+                                {formatCurrency(order.total_amount_cents)}
+                                <ApiPrintCredits order={order} />
+                            </td>
                             <td>
                                 <div>{order.quantity} {isCardstockOrder ? (order.quantity === 1 ? 'sheet' : 'sheets') : 'cards'}</div>
                                 {!isCardstockOrder && (

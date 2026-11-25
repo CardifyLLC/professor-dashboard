@@ -1,4 +1,5 @@
 import OrderImage from './OrderImage';
+import ApiPrintCredits from './ApiPrintCredits';
 import EnvelopeShipmentButton from './EnvelopeShipmentButton';
 import OrderLink from './OrderLink';
 import PartnerOrderPanel from './PartnerOrderPanel';
@@ -578,6 +579,7 @@ const OrderDetail = ({ order, onClose, onOrderUpdated }) => {
                                     <span className="info-label">Payment</span>
                                     <span>{order.payment_status || 'N/A'}</span>
                                 </div>
+                                <ApiPrintCredits order={order} detailed />
                             </div>
 
                             <div className="detail-section">
