@@ -6,6 +6,7 @@
     }
   ],
   "functions": {
+    "api/analytics-summary.js": { "maxDuration": 60 },
     "api/business-report.js": { "maxDuration": 300 },
     "api/reporting-job.js": { "maxDuration": 300 },
     "api/partnerships.js": {

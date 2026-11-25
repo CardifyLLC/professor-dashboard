@@ -188,10 +188,14 @@ const Analytics = ({ orders, onRefreshOrders, refreshingOrders = false }) => {
             setStripeLoading(true);
             const cutoff = rangeStart(rangeDays)?.toISOString() || null;
 
-            const q = (table, col = 'day') =>
-                cutoff
-                    ? supabase.from(table).select('*').gte(col, cutoff).order(col, { ascending: false })
-                    : supabase.from(table).select('*').order(col, { ascending: false });
+            const summaryPromise = (async () => {
+                const headers = await getAdminAuthHeaders();
+                const response = await fetch(`/api/analytics-summary?days=${rangeDays || 'all'}`, { headers });
+                const result = await response.json();
+                if (!response.ok) throw new Error(result.error || 'Analytics unavailable.');
+                return result;
+            })();
+            const q = key => summaryPromise.then(result => result[key] || { error: 'Summary unavailable.' });
 
             const stripePromise = (async () => {
                 const headers = await getAdminAuthHeaders();
@@ -206,11 +210,11 @@ const Analytics = ({ orders, onRefreshOrders, refreshingOrders = false }) => {
             })();
 
             const [df, of, ft, np, er, ev, deleted, stripe] = await Promise.all([
-                q('v_design_funnel_summary'),
-                q('v_order_funnel_summary'),
-                q('v_feature_adoption', 'week'),
-                q('v_nps_summary', 'week'),
-                q('v_error_summary'),
+                q('design'),
+                q('order'),
+                q('features'),
+                q('nps'),
+                q('errors'),
                 cutoff
                     ? supabase.from('analytics_events').select('*').gte('created_at', cutoff).order('created_at', { ascending: false }).limit(25)
                     : supabase.from('analytics_events').select('*').order('created_at', { ascending: false }).limit(25),
