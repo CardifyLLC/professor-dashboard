@@ -1,0 +1,16 @@
+.api-credit-purchases { margin-bottom: 28px; }
+.api-credit-purchases-controls, .api-credit-purchases-pagination {
+    display: flex; align-items: center; flex-wrap: wrap; gap: 10px;
+}
+.api-credit-purchases-controls label { font-size: 13px; }
+.api-credit-purchases select, .api-credit-purchases button {
+    padding: 8px 10px; border: 1px solid var(--border-color); border-radius: 6px;
+    background: var(--bg-card); color: var(--text-primary); font-size: 13px;
+}
+.api-credit-purchases select { margin-left: 8px; }
+.api-credit-purchases button:disabled { opacity: .45; cursor: default; }
+.api-credit-purchases .api-credit-purchases-description { margin: 0 0 14px; color: var(--text-secondary); line-height: 1.6; }
+.api-credit-purchases .api-credit-purchases-test { padding: 10px; margin: 10px 0; color: #fcd34d; border: 1px solid #854d0e; border-radius: 6px; }
+.api-credit-purchases .api-credit-purchases-count { margin: 12px 0; color: var(--text-secondary); }
+.api-credit-purchases-pagination { justify-content: flex-end; margin-top: 14px; font-size: 13px; }
+.api-credit-purchases th, .api-credit-purchases td { vertical-align: top; }

@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { Activity, Coins, Gift, RefreshCw, RotateCcw, ShoppingCart, Users } from 'lucide-react';
 import { getAdminAuthHeaders } from '../services/supabaseClient';
 import PrintPackagePurchases from './PrintPackagePurchases';
+import ApiPrintCreditPurchases from './ApiPrintCreditPurchases';
 
 const fmt = (value) => Number(value || 0).toLocaleString();
 const labels = {
@@ -55,6 +56,7 @@ export default function PrintsAnalytics() {
   const [packages, setPackages] = useState(null);
   const [packageError, setPackageError] = useState('');
   const [packagesLoading, setPackagesLoading] = useState(true);
+  const [creditPurchasesRefresh, setCreditPurchasesRefresh] = useState(0);
 
   const loadPackages = useCallback(async () => {
     setPackagesLoading(true); setPackageError('');
@@ -88,12 +90,13 @@ export default function PrintsAnalytics() {
   return <div>
     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '14px', marginBottom: '22px' }}>
       <div><h1 className="page-title" style={{ marginBottom: '5px' }}>PRINTS Analytics</h1><p style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>Wallet circulation, credits, grants, rewards, and spending.</p></div>
-      <button onClick={() => { void load(); void loadPackages(); }} disabled={loading || packagesLoading} style={{ display: 'flex', alignItems: 'center', gap: '7px', padding: '9px 14px', borderRadius: '8px', border: '1px solid var(--border-color)', background: 'var(--bg-card)', color: 'var(--text-primary)', cursor: loading ? 'wait' : 'pointer' }}>
+      <button onClick={() => { void load(); void loadPackages(); setCreditPurchasesRefresh(value => value + 1); }} disabled={loading || packagesLoading} style={{ display: 'flex', alignItems: 'center', gap: '7px', padding: '9px 14px', borderRadius: '8px', border: '1px solid var(--border-color)', background: 'var(--bg-card)', color: 'var(--text-primary)', cursor: loading ? 'wait' : 'pointer' }}>
         <RefreshCw size={15} className={loading ? 'spin' : ''} /> Refresh
       </button>
     </div>
     {error && <div style={{ padding: '14px', marginBottom: '18px', border: '1px solid #ef4444', borderRadius: '9px', background: '#ef444420', color: '#ef4444' }}>{error}</div>}
     <PrintPackagePurchases data={packages} loading={packagesLoading} error={packageError} />
+    <ApiPrintCreditPurchases refreshVersion={creditPurchasesRefresh} />
     {loading && !data ? <div className="loading">Loading PRINTS data...</div> : data && <>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))', gap: '12px', marginBottom: '18px' }}>
         <StatCard icon={Coins} title="In circulation" value={summary.circulation} note="Available across active wallets" color="#f59e0b" />
