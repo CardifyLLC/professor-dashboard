@@ -20,7 +20,7 @@ const result = await build({
     resolveDir: fileURLToPath(new URL('..', import.meta.url)),
   },
   bundle: true, write: false, platform: 'node', format: 'cjs', packages: 'external', jsx: 'automatic',
-  define: { 'import.meta.env': JSON.stringify({ VITE_SUPABASE_URL: 'https://fixture.example', VITE_SUPABASE_ANON_KEY: 'fixture' }) },
+  define: { 'import.meta.env': JSON.stringify({ VITE_SUPABASE_URL: 'https://fixture.example', VITE_SUPABASE_ANON_KEY: 'fixture' }), 'window.location.href': JSON.stringify('https://dashboard.example/') },
   plugins: [{ name: 'no-live-services', setup(builder) {
     builder.onLoad({ filter: /[/\\]supabaseClient\.js$/ }, () => ({
       contents: `const forbidden = () => { throw new Error('Unexpected service access'); };
