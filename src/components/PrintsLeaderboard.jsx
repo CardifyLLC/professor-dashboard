@@ -26,7 +26,7 @@ export default function PrintsLeaderboard() {
   }, [sort, refresh]);
   return <section>
     <h1 className="page-title">Prints leaderboard</h1>
-    <p style={{ color: 'var(--text-muted)', lineHeight: 1.6 }}>All-time referrals and affiliate-earned Prints. Purchases, cash rewards and other bonuses are excluded. Members are anonymous by default and can publish their display name in their profile.</p>
+    <p style={{ color: 'var(--text-muted)', lineHeight: 1.6 }}>All-time referrals and affiliate-earned Prints. Purchases, cash rewards and other bonuses are excluded. Names are shown by default; members can choose Anonymous in Edit profile to hide their name on the website and Discord leaderboards.</p>
     <div style={{ display: 'flex', flexWrap: 'wrap', gap: 16, margin: '24px 0', alignItems: 'center' }}>
       <label>Rank by <select value={sort} onChange={event => setSort(event.target.value)} style={{ padding: 10, marginLeft: 8, background: 'var(--bg-card)', color: 'var(--text-primary)', border: '1px solid var(--border-color)', borderRadius: 8 }}><option value="prints">Earned Prints</option><option value="referrals">Referrals</option></select></label>
       <button type="button" disabled={loading} onClick={() => setRefresh(value => value + 1)} style={{ padding: '10px 18px', border: '1px solid var(--border-color)', borderRadius: 8 }}>Refresh</button>
